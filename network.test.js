@@ -16,7 +16,8 @@ test('two sockets join, synchronize moves and reject out-of-turn commands',async
  a.send(JSON.stringify({type:'join',room:'TEST'}));assert.equal((await a.next()).team,0);assert.equal((await a.next()).ready,false);
  b.send(JSON.stringify({type:'join',room:'TEST'}));assert.equal((await b.next()).team,1);assert.equal((await b.next()).ready,true);await a.next();
  await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'move',id:0,x:2,z:2}));
- const sa=await a.next(),sb=await b.next();assert.deepEqual(sa,sb);assert.equal(sa.state.units[0].x,2);
+ const sa=await a.next(),sb=await b.next();assert.deepEqual(sa,sb);assert.equal(sa.state.units[0].x,2);assert.equal(sa.state.units.length,2);
+ await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'equip',id:0,weapon:'pistol'}));assert.equal((await a.next()).state.units[0].weapon,'pistol');assert.equal((await b.next()).state.units[0].weapon,'pistol');
  b.send(JSON.stringify({type:'end'}));assert.equal((await b.next()).type,'error');
  await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'end'}));assert.equal((await a.next()).state.turn,1);assert.equal((await b.next()).state.turn,1);
  a.close();assert.equal((await b.next()).type,'closed');

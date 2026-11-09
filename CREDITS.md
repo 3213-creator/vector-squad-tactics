@@ -37,6 +37,6 @@ The following nine GLB files are used for the actual first-person weapons. Their
 - Dying.fbx: supplied by the user. Its 4.4-second bone motion was sampled and retargeted to the SWAT-compatible rig, with ground-height correction, as dying.json.
 - Rifle Idle.fbx: supplied by the user. Its 10.63-second motion was retargeted and sampled at 15 FPS for the lobby as rifle-idle.json.
 - The Soldier appearance remains from the user's Soldier GLB. soldier-rigged.glb preserves its geometry/material appearance and adds skinning weights transferred from the uploaded Quaternius SWAT rig to support the supplied idle motion.
-- SWAT's exposed eyes, cloth mask, raised goggles and microphone, per-weapon sights, and held grenade are procedural additions based on the user's references.
+- Per-weapon sights and the held grenade are procedural additions based on the user's references. SWAT retains the original uploaded helmet/visor appearance; the custom face was removed at the user's request.
 
 No additional license terms for the supplied FBX files were provided or inferred.

@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: vector-squad-tactics
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # In-memory rooms require a single instance. Do not scale horizontally.

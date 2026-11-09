@@ -37,3 +37,6 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 
 /* Character preview rotation is local to the lobby and supports touch swipes. */
 #lobby-viewport canvas{touch-action:pan-y;user-select:none;cursor:grab}#lobby-viewport canvas.turning{cursor:grabbing}.lobby-rotation-hint{position:absolute;left:50%;bottom:235px;transform:translateX(-50%);padding:7px 12px;background:#0b1821a8;border:1px solid #72857955;color:#c1d4cd;font-size:10px;letter-spacing:1px;white-space:nowrap;pointer-events:none}@media(max-width:600px){.lobby-rotation-hint{top:53%;bottom:auto;font-size:9px;letter-spacing:0}}
+
+/* Keep horizontal preview gestures active on phones and across lobby overlays. */
+#lobby-viewport canvas{touch-action:none}.lobby.turning{cursor:grabbing}.lobby-shade,.operator-labels,.lobby-rotation-hint{pointer-events:none}

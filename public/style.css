@@ -66,3 +66,6 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 .intro-progress{position:absolute;bottom:15%;width:min(460px,75vw);height:4px;background:#1a2b32cc;border:1px solid #b9bfa36b}.intro-progress i{display:block;height:100%;width:100%;background:#eddb9e;transform:scaleX(0);transform-origin:left}
 .match-intro>p{position:absolute;bottom:6%;left:20px;right:20px;font-size:12px;color:#edf2d8;text-shadow:0 2px 4px #000;margin:0}.match-intro[data-stage="countdown"]{background:#04101c60}.match-intro[data-stage="go"]{pointer-events:none;background:transparent}.match-intro[data-stage="go"] .intro-heading,.match-intro[data-stage="go"]>p{display:none}.match-intro[data-stage="go"] #intro-number{font-family:system-ui,sans-serif;font-size:clamp(38px,8vw,96px);font-weight:1000;letter-spacing:-1px}
 @media(max-width:600px){.intro-heading{top:8%}.intro-heading>span{font-size:8px;letter-spacing:3px}.match-intro>p{font-size:10px;bottom:7%;line-height:1.6}.intro-progress{bottom:17%}}
+
+/* Keep the final scene visible for three seconds before showing the match report. */
+#battle-main.ending>:not(#viewport):not(#match-notice){visibility:hidden;pointer-events:none}

@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "three": "0.170.0",
-    "ws": "8.18.3"
+    "ws": "8.22.2"
   },
   "engines": {
     "node": ">=22 <25"

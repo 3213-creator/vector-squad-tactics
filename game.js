@@ -5,11 +5,11 @@ import {weapons,isPrimary,isSidearm,canAim} from './weapons.js';
 export {weapons} from './weapons.js';
 export function spawnPoint(id){return {x:id?7.5:-7.5,y:.15,z:.5,yaw:id?Math.PI/2:-Math.PI/2,pitch:0};}
 function body(id){return {id,...spawnPoint(id),vx:0,vy:0,vz:0,grounded:false,ladder:null,hp:100,lives:3,diedAt:0,weapon:'rifle',primary:'rifle',secondary:'pistol',ammo:Object.fromEntries(Object.entries(weapons).filter(([,w])=>w.mag!==null).map(([key,w])=>[key,w.mag])),reserve:Object.fromEntries(Object.entries(weapons).filter(([,w])=>w.mag!==null).map(([key,w])=>[key,w.mag*3])),grenades:2,throwAt:0,throwUntil:0,lastShot:0,nextShotAt:0,stepDistance:0,lastMelee:0,reloadUntil:0,respawnAt:0,shieldUntil:0,coins:300,armor:0,damageBoost:1,thermalUntil:0,pendingUpgrades:{damage:false,shield:false,reveal:false},ack:0,shots:0};}
-export function initial(mode='pvp'){return {phase:'lobby',mode,players:[null,null],winner:null,units:[body(0),body(1)],grenades:[],crates:[],doors:doorTemplates.map(d=>({...d,open:false})),impacts:[],impactSeq:0,events:[],clock:0,lastEvent:'1 대 1 FPS 준비'};}
+export function initial(mode='pvp'){return {phase:'lobby',mode,players:[null,null],winner:null,scores:[{kills:0,deaths:0},{kills:0,deaths:0}],resultsConfirmed:[false,false],units:[body(0),body(1)],grenades:[],crates:[],doors:doorTemplates.map(d=>({...d,open:false})),impacts:[],impactSeq:0,events:[],clock:0,lastEvent:'1 대 1 FPS 준비'};}
 export function returnToLobby(old){const next=initial(old.mode);next.players=old.players.map(p=>p?{...p,ready:!!p.isBot}:null);next.units.forEach((u,i)=>{u.weapon=old.units[i].weapon;u.primary=old.units[i].primary;u.secondary=old.units[i].secondary;});return next;}
 function event(s,type,data={}){s.events.push({id:++s.clock,type,...data});if(s.events.length>16)s.events.shift();}
 export function action(s,id,a,now=Date.now()){
- setDoors(s.doors);const u=s.units[id],player=s.players[id];if(!player)throw Error('먼저 방에 참가하세요.');
+ setDoors(s.doors);const u=s.units[id],player=s.players[id];if(!player)throw Error('먼저 방에 참가하세요.');if(s.phase==='results')return;
  if(a.type==='profile'){if(s.phase!=='lobby'||typeof a.name!=='string'||!a.name.trim()||Array.from(a.name.trim()).length>12||/[\u0000-\u001f\u007f]/.test(a.name))throw Error('로비에서 이름을 1~12자로 입력하세요.');player.name=a.name.trim();return;}
  if(a.type==='ready'){if(s.phase!=='lobby')return;player.ready=!player.ready;if(s.players.every(p=>p?.ready)){s.phase='battle';s.crates=makeCrates();s.units.forEach(u=>{u.weapon=u.primary;u.shieldUntil=now+3000;});event(s,'start');}return;}
  if(a.type==='equip'){
@@ -27,7 +27,22 @@ export function action(s,id,a,now=Date.now()){
  if(a.type==='grenade'){if(u.grenades<=0||s.grenades.length>=8)return;u.grenades--;u.reloadUntil=0;u.scoped=false;u.throwAt=now+300;u.throwUntil=now+650;event(s,'grenadeWindup',{actor:id,x:u.x,y:u.y+EYE,z:u.z});return;}
 }
 function beginReload(s,u,now){const w=weapons[u.weapon];if(w.mag!==null&&!u.reloadUntil&&!u.throwUntil&&u.ammo[u.weapon]<w.mag&&u.reserve[u.weapon]>0){u.reloadUntil=now+w.reload;u.scoped=false;event(s,'reload',{actor:u.id});}}
-export function hurt(s,target,damage,attacker,now){if(target.hp<=0||s.winner!==null||now<target.shieldUntil)return;const absorbed=Math.min(target.armor||0,damage);target.armor-=absorbed;damage-=absorbed;target.hp=Math.max(0,target.hp-damage);event(s,'hit',{actor:attacker,target:target.id,damage});if(target.hp===0){target.lives--;target.diedAt=now;target.reloadUntil=0;target.throwAt=target.throwUntil=0;target.respawnAt=target.lives>0?now+5000:0;event(s,'death',{target:target.id});if(target.lives===0){s.winner=1-target.id;event(s,'victory',{actor:s.winner});}}}
+export function hurt(s,target,damage,attacker,now){
+ if(target.hp<=0||s.winner!==null||now<target.shieldUntil)return;
+ const absorbed=Math.min(target.armor||0,damage);target.armor-=absorbed;damage-=absorbed;
+ target.hp=Math.max(0,target.hp-damage);event(s,'hit',{actor:attacker,target:target.id,damage});
+ if(target.hp===0){
+  s.scores[target.id].deaths++;
+  if(attacker!==target.id&&s.scores[attacker])s.scores[attacker].kills++;
+  target.lives--;target.diedAt=now;target.reloadUntil=0;target.throwAt=target.throwUntil=0;
+  target.respawnAt=target.lives>0?now+5000:0;event(s,'death',{actor:attacker,target:target.id});
+  if(target.lives===0){
+   s.winner=1-target.id;s.phase='results';s.resultsConfirmed=s.players.map(p=>!!p?.isBot);
+   for(const p of s.players)if(p)p.ready=!!p.isBot;
+   event(s,'victory',{actor:s.winner});
+  }
+ }
+}
 function strike(s,u,damage,range,now,melee=false,headDamage=damage){const origin=melee?new Vector3(u.x,u.y+EYE,u.z):shotOrigin(u),direction=melee?look(u.yaw,u.pitch):shotDirection(u,s.units),ray=new Ray(origin,direction),v=s.units[1-u.id];
  let distance=Infinity,headshot=false;const point=new Vector3();let crateDistance=Infinity,selectedCrate=null;
  for(const c of s.crates){if(c.broken)continue;let dist=Infinity;if(melee){const delta=new Vector3(c.x,c.y+.4,c.z).sub(origin);if(delta.length()<=range&&delta.clone().normalize().dot(direction)>.4)dist=delta.length();}else{const p=ray.intersectBox(new Box3(new Vector3(c.x-.4,c.y,c.z-.4),new Vector3(c.x+.4,c.y+.75,c.z+.4)),new Vector3());if(p)dist=origin.distanceTo(p);}if(dist<crateDistance){crateDistance=dist;selectedCrate=c;}}
@@ -38,7 +53,7 @@ function strike(s,u,damage,range,now,melee=false,headDamage=damage){const origin
 }
 export function tick(s,inputs,now=Date.now(),dt=STEP){if(s.phase!=='battle'||s.winner!==null)return;
  for(const u of s.units){if(u.hp<=0){if(u.respawnAt&&now>=u.respawnAt){const lives=u.lives,weapon=u.weapon,primary=u.primary,secondary=u.secondary,ack=u.ack,coins=u.coins,upgrades=u.pendingUpgrades;Object.assign(u,body(u.id),{lives,weapon,primary,secondary,ack,coins,damageBoost:upgrades.damage?1.1:1,armor:upgrades.shield?20:0,thermalUntil:upgrades.reveal?now+8000:0,shieldUntil:now+3000});event(s,'respawn',{target:u.id});}continue;}
- const input=inputs[u.id]||{};setCrates(s.crates);setDoors(s.doors);const oldX=u.x,oldZ=u.z;moveBody(u,input,dt);if(u.grounded&&u.ladder===null){u.stepDistance+=Math.hypot(u.x-oldX,u.z-oldZ);if(u.stepDistance>(input.sprint?1.7:1.35)){u.stepDistance=0;event(s,'footstep',{actor:u.id,x:u.x,y:u.y+.12,z:u.z});}}u.scoped=!!input.scoped&&canAim(u.weapon)&&!u.reloadUntil&&!u.throwUntil&&u.ladder===null;if(Number.isInteger(input.seq))u.ack=input.seq;if(u.y< -5){hurt(s,u,1000,1-u.id,now);continue;}
+ const input=inputs[u.id]||{};setCrates(s.crates);setDoors(s.doors);const oldX=u.x,oldZ=u.z;moveBody(u,input,dt);if(u.grounded&&u.ladder===null){u.stepDistance+=Math.hypot(u.x-oldX,u.z-oldZ);if(u.stepDistance>(input.sprint?1.7:1.35)){u.stepDistance=0;event(s,'footstep',{actor:u.id,x:u.x,y:u.y+.12,z:u.z});}}u.scoped=!!input.scoped&&canAim(u.weapon)&&!u.reloadUntil&&!u.throwUntil&&u.ladder===null;if(Number.isInteger(input.seq))u.ack=input.seq;if(u.y< -5){hurt(s,u,1000,u.id,now);continue;}
  if(u.throwAt&&now>=u.throwAt){const d=look(u.yaw,u.pitch);s.grenades.push({id:++s.clock,owner:u.id,x:u.x+d.x*.5,y:u.y+EYE,z:u.z+d.z*.5,vx:d.x*18,vy:d.y*18+5,vz:d.z*18,explodeAt:now+2200});u.throwAt=0;event(s,'grenadeThrow',{actor:u.id,x:u.x,y:u.y+EYE,z:u.z});}if(u.throwUntil&&now>=u.throwUntil)u.throwUntil=0;
  if(u.reloadUntil&&now>=u.reloadUntil){const amount=Math.min(weapons[u.weapon].mag-u.ammo[u.weapon],u.reserve[u.weapon]);u.ammo[u.weapon]+=amount;u.reserve[u.weapon]-=amount;u.reloadUntil=0;}
  const w=weapons[u.weapon];if(w.mag!==null&&u.ammo[u.weapon]===0)beginReload(s,u,now);if(input.fire&&!u.throwUntil&&u.ladder===null&&!u.reloadUntil&&now>=u.nextShotAt){if(w.mag!==null&&u.ammo[u.weapon]<=0)continue;if(w.mag!==null)u.ammo[u.weapon]--;u.lastShot=now;const interval=60000/w.rpm;u.nextShotAt=u.nextShotAt>now-interval?u.nextShotAt+interval:now+interval;if(w.mag!==null)u.shots++;const impact=strike(s,u,w.mag===null?w.damage:Math.round(w.damage*u.damageBoost),w.range,now,w.mag===null,w.mag===null?w.head:Math.round(w.head*u.damageBoost));if(w.mag!==null&&impact&&!impact.dynamic&&impact.normal){s.impacts.push({id:++s.impactSeq,p:impact.position.toArray().map(v=>+v.toFixed(3)),n:impact.normal.toArray().map(v=>+v.toFixed(4))});if(s.impacts.length>48)s.impacts.shift();}event(s,w.mag===null?'melee':'shot',{actor:u.id,weapon:u.weapon,x:u.x,y:u.y+EYE,z:u.z});if(w.mag!==null&&u.ammo[u.weapon]===0)beginReload(s,u,now);}

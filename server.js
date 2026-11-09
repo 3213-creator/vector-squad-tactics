@@ -17,7 +17,7 @@ for(const w of Object.values(weapons))if(w.model)for(const [ext,type]of [['glb',
 const cachedAssets=new Map(await Promise.all(Object.entries(assets).map(async([path,[file,type]])=>[path,{body:await readFile(new URL(file,import.meta.url)),type}])));
 for(const asset of cachedAssets.values())asset.gzip=gzipSync(asset.body,{level:6});
 // Stream music on demand instead of caching or gzip-compressing full MP3 files.
-const musicTracks=new Map(await Promise.all(['main-theme-wot','lobby-theme-mw2','result-victory','result-defeat'].map(async name=>{
+const musicTracks=new Map(await Promise.all(['main-theme-wot','lobby-theme-mw2','result-victory','result-defeat','battle-intro-abbey'].map(async name=>{
  const file=new URL(`public/audio/${name}.mp3`,import.meta.url),info=await stat(file);
  return [`/audio/${name}.mp3`,{file,size:info.size}];
 })));
@@ -83,11 +83,11 @@ wss.on('connection',ws=>{
 });
 let frame=0;
 const simulation=setInterval(()=>{const now=Date.now();frame++;for(const room of rooms.values()){
- if(room.state.phase!=='battle')continue;
+ if(!['intro','countdown','battle'].includes(room.state.phase))continue;
  const inputs=room.inputs.map((input,i)=>{const current=input&&now-room.inputAt[i]<300?{...input,jump:room.jumpPending[i],interact:room.interactPending[i],fire:input.fire||room.firePending[i]}:{yaw:room.state.units[i].yaw,pitch:room.state.units[i].pitch};room.jumpPending[i]=false;room.interactPending[i]=false;room.firePending[i]=false;return current;});
- if(room.state.mode==='ai'&&room.state.players[1]?.isBot)inputs[1]=botInput(room.state,room.brain,navigation,now);
- tick(room.state,inputs,now);
- if(room.state.phase==='results'||frame%2===0)broadcast(room);
+ if(room.state.phase==='battle'&&room.state.mode==='ai'&&room.state.players[1]?.isBot)inputs[1]=botInput(room.state,room.brain,navigation,now);
+ const previousPhase=room.state.phase;tick(room.state,inputs,now);
+ if(room.state.phase!==previousPhase||frame%2===0)broadcast(room);
 }},1000/30);
 // Ping frames keep the WebSocket active and detect broken connections.
 const heartbeat=setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue;}ws.isAlive=false;ws.ping();}},25000);

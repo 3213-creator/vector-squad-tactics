@@ -1,6 +1,6 @@
-import {isSniper,isSidearm} from './weapons.js';
+import {isSniper,isSidearm,canAim,aimProfiles,weapons} from './weapons.js';
 import {ladders,nearLadder,toggleLadder} from './environment.js';
-import {Vector3,Ray,Box3} from 'three';
+import {Vector3,Ray,Box3,Sphere} from 'three';
 import {Capsule} from 'three/addons/math/Capsule.js';
 export const STEP=1/30,EYE=1.5,HEIGHT=1.75,RADIUS=.28;
 let world=null,crates=[],doors=[];
@@ -19,7 +19,7 @@ export function moveBody(u,input={},dt=STEP){
  const yaw=Number.isFinite(input.yaw)?input.yaw:u.yaw;u.yaw=yaw;u.pitch=Number.isFinite(input.pitch)?input.pitch:u.pitch;
  let f=input.forward||0,r=input.strafe||0;const len=Math.hypot(f,r);if(len>1){f/=len;r/=len;}
  if(input.forward>0){for(const d of doors){if(d.open||u.y>.4)continue;const dx=d.x-u.x,dz=d.z-u.z,dist=Math.hypot(dx,dz),lateral=d.axis==='z'?Math.abs(dx):Math.abs(dz);if(dist<1.5&&lateral<d.width/2+.25&&(-Math.sin(yaw)*dx-Math.cos(yaw)*dz)/Math.max(dist,.01)>.3)d.open=true;}}
- const speed=input.sprint?5.8:3.8;u.vx=(-Math.sin(yaw)*f+Math.cos(yaw)*r)*speed;u.vz=(-Math.cos(yaw)*f-Math.sin(yaw)*r)*speed;
+ const speed=input.sprint&&!(input.scoped&&canAim(u.weapon))?5.8:3.8;u.vx=(-Math.sin(yaw)*f+Math.cos(yaw)*r)*speed;u.vz=(-Math.cos(yaw)*f-Math.sin(yaw)*r)*speed;
  if(input.jump&&u.grounded){u.vy=7;u.grounded=false;}u.vy-=22*dt;
  const capsule=new Capsule(new Vector3(u.x,u.y+RADIUS,u.z),new Vector3(u.x,u.y+HEIGHT-RADIUS,u.z),RADIUS);
  capsule.translate(new Vector3(u.vx*dt,u.vy*dt,u.vz*dt));u.grounded=false;
@@ -29,4 +29,13 @@ export function moveBody(u,input={},dt=STEP){
  u.x=Math.max(-12,Math.min(12,capsule.start.x));u.y=capsule.start.y-RADIUS;u.z=Math.max(-8,Math.min(8,capsule.start.z));
 }
 
-export function shotOrigin(u){const direction=look(u.yaw,u.pitch),eye=new Vector3(u.x,u.y+EYE,u.z);if((u.scoped&&isSniper(u.weapon))||u.weapon==='knife')return eye;const right=new Vector3(Math.cos(u.yaw),0,-Math.sin(u.yaw)),up=new Vector3().crossVectors(right,direction).normalize();const scale=isSidearm(u.weapon)?.7:1;return eye.addScaledVector(right,.25*scale).addScaledVector(up,-.25*scale).addScaledVector(direction,isSniper(u.weapon)?1.18:isSidearm(u.weapon)?.65:.93);}
+export function shotOrigin(u){const direction=look(u.yaw,u.pitch),eye=new Vector3(u.x,u.y+EYE,u.z);if((u.scoped&&isSniper(u.weapon))||u.weapon==='knife')return eye;const right=new Vector3(Math.cos(u.yaw),0,-Math.sin(u.yaw)),up=new Vector3().crossVectors(right,direction).normalize();const profile=aimProfiles[u.weapon];if(u.scoped&&profile)return eye.addScaledVector(direction,profile.rear+profile.eye).addScaledVector(up,-profile.height);const scale=isSidearm(u.weapon)?.7:1;return eye.addScaledVector(right,.25*scale).addScaledVector(up,-.25*scale).addScaledVector(direction,isSniper(u.weapon)?1.18:isSidearm(u.weapon)?.65:.93);}
+
+// Aimed shots leave the real barrel and converge on the point seen through the sight.
+export function shotDirection(u,targets=[]){
+ const direction=look(u.yaw,u.pitch);if(!u.scoped||!aimProfiles[u.weapon])return direction;
+ const eye=new Vector3(u.x,u.y+EYE,u.z),ray=new Ray(eye,direction);let distance=Math.min(weapons[u.weapon].range,raycastWorld(ray)?.distance??Infinity);
+ for(const c of crates){if(c.broken)continue;const p=ray.intersectBox(new Box3(new Vector3(c.x-.4,c.y,c.z-.4),new Vector3(c.x+.4,c.y+.75,c.z+.4)),new Vector3());if(p)distance=Math.min(distance,eye.distanceTo(p));}
+ for(const target of targets){if(target.id===u.id||target.hp<=0)continue;for(const [height,radius]of [[.7,.34],[1.1,.34],[1.5,.25]]){const p=ray.intersectSphere(new Sphere(new Vector3(target.x,target.y+height,target.z),radius),new Vector3());if(p)distance=Math.min(distance,eye.distanceTo(p));}}
+ return eye.addScaledVector(direction,Math.max(.05,distance)).sub(shotOrigin(u)).normalize();
+}

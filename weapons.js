@@ -15,3 +15,15 @@ export const loadoutSlots=[{key:'primary',name:'주무기',number:1},{key:'secon
 export const isSniper=key=>weapons[key]?.category==='sniper';
 export const isSidearm=key=>weapons[key]?.slot==='보조무기';
 export const isPrimary=key=>weapons[key]?.slot==='주무기';
+
+// Sight lines are measured in normalized model metres, with the muzzle at z=0.
+export const aimProfiles={
+ rifle:{kind:'aperture',label:'링 가늠자 / 전방 가늠쇠',height:.105,rear:.58,front:.13,eye:.24,fov:55},
+ rifle_z:{kind:'notch',label:'AK 개방형 가늠자',height:.076,rear:.48,front:.045,eye:.25,fov:55},
+ smg_z:{kind:'ring-reflex',label:'P90 원형 도트 조준경',height:.17,rear:.46,front:.435,eye:.23,fov:58},
+ smg_q:{kind:'open-reflex',label:'개방형 그린 도트 조준경',height:.13,rear:.46,front:.435,eye:.24,fov:58},
+ pistol:{kind:'three-dot',label:'3점식 아이언 사이트',height:.057,rear:.34,front:.035,eye:.32,fov:60},
+ pistol_z:{kind:'u-notch',label:'U 가늠자 / 주황 가늠쇠',height:.079,rear:.355,front:.025,eye:.32,fov:60},
+ revolver:{kind:'v-notch',label:'V 가늠자 / 램프 가늠쇠',height:.058,rear:.27,front:.025,eye:.34,fov:58}
+};
+export const canAim=key=>!!weapons[key]&&weapons[key].mag!==null;

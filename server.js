@@ -8,7 +8,7 @@ import {setWorld} from './physics.js';
 import {buildNavigation,createBrain,botInput} from './bot.js';
 import {loadWorld} from './world.js';
 const world=await loadWorld();setWorld(world);const navigation=buildNavigation(world);
-const assets={'/weapon-model.js':['public/weapon-model.js','text/javascript'],'/weapons.js':['weapons.js','text/javascript'],'/':['public/index.html','text/html'],'/style.css':['public/style.css','text/css'],'/client.js':['public/client.js','text/javascript'],'/game.js':['game.js','text/javascript'],'/three.js':['node_modules/three/build/three.module.js','text/javascript']};
+const assets={'/assets/soldier-rigged.glb':['public/assets/soldier-rigged.glb','model/gltf-binary'],'/assets/dying.json':['public/assets/dying.json','application/json'],'/assets/rifle-idle.json':['public/assets/rifle-idle.json','application/json'],'/swat-face.js':['public/swat-face.js','text/javascript'],'/remote-combat.js':['public/remote-combat.js','text/javascript'],'/weapon-model.js':['public/weapon-model.js','text/javascript'],'/weapons.js':['weapons.js','text/javascript'],'/':['public/index.html','text/html'],'/style.css':['public/style.css','text/css'],'/client.js':['public/client.js','text/javascript'],'/game.js':['game.js','text/javascript'],'/three.js':['node_modules/three/build/three.module.js','text/javascript']};
 Object.assign(assets,{'/bvh.js':['node_modules/three-mesh-bvh/build/index.module.js','text/javascript'],'/collision-world.js':['collision-world.js','text/javascript'],'/spatial-audio.js':['public/spatial-audio.js','text/javascript'],'/audio/credits':['public/audio/CREDITS.md','text/plain'],'/environment.js':['environment.js','text/javascript'],'/physics.js':['physics.js','text/javascript'],'/map-data.js':['map-data.js','text/javascript'],'/assets/minimap.webp':['public/assets/minimap.webp','image/webp'],'/assets/collision.glb':['public/assets/collision.glb','model/gltf-binary'],'/assets/title-background.webp':['public/assets/title-background.webp','image/webp'],'/assets/death-match-logo.webp':['public/assets/death-match-logo.webp','image/webp'],'/assets/arena.glb':['public/assets/arena.glb','model/gltf-binary'],'/assets/soldier.glb':['public/assets/soldier.glb','model/gltf-binary'],'/assets/swat.glb':['public/assets/swat.glb','model/gltf-binary']});
 for(const path of ['loaders/GLTFLoader.js','utils/BufferGeometryUtils.js','utils/SkeletonUtils.js','math/Capsule.js'])assets['/addons/'+path]=['node_modules/three/examples/jsm/'+path,'text/javascript'];
 for(const sound of ['rifle','sniper','pistol','explosion','step1','step2','throw'])assets['/audio/'+sound+'.wav']=['public/audio/'+sound+'.wav','audio/wav'];
@@ -19,7 +19,7 @@ const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.u
 const wss=new WebSocketServer({server,maxPayload:4096});
 const rooms=new Map();
 const send=(ws,msg)=>{if(ws.readyState!==WebSocket.OPEN)return;if(ws.bufferedAmount>65536){ws.terminate();return;}ws.send(JSON.stringify(msg));};
-function broadcast(room){for(const ws of room.players)send(ws,{type:'state',state:room.state,ready:room.state.players.every(Boolean)});}
+function broadcast(room){for(const ws of room.players)send(ws,{type:'state',serverTime:Date.now(),state:room.state,ready:room.state.players.every(Boolean)});}
 wss.on('connection',ws=>{
  if(wss.clients.size>200){ws.close(1013,'Server full');return;}
  ws.isAlive=true;ws.on('pong',()=>{ws.isAlive=true;});

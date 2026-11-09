@@ -17,7 +17,7 @@ for(const w of Object.values(weapons))if(w.model)for(const [ext,type]of [['glb',
 const cachedAssets=new Map(await Promise.all(Object.entries(assets).map(async([path,[file,type]])=>[path,{body:await readFile(new URL(file,import.meta.url)),type}])));
 for(const asset of cachedAssets.values())asset.gzip=gzipSync(asset.body,{level:6});
 // Stream music on demand instead of caching or gzip-compressing full MP3 files.
-const musicTracks=new Map(await Promise.all(['main-theme-wot','lobby-theme-mw2'].map(async name=>{
+const musicTracks=new Map(await Promise.all(['main-theme-wot','lobby-theme-mw2','result-victory','result-defeat'].map(async name=>{
  const file=new URL(`public/audio/${name}.mp3`,import.meta.url),info=await stat(file);
  return [`/audio/${name}.mp3`,{file,size:info.size}];
 })));

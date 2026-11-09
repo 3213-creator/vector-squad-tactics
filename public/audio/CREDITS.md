@@ -22,4 +22,6 @@
 ## Background music (user-provided recordings)
 - `main-theme-wot.mp3`: supplied as "Main Theme - WoT.mp3". Loops on the title screen and pre-lobby menus.
 - `lobby-theme-mw2.mp3`: supplied as "Call of Duty Modern Warfare 2 - Main Theme (Official OST) - Dan Allen Gaming.mp3". Loops in the room lobby.
-- Audio files are unchanged; browser playback uses reduced volume. Music stops during battles and match results.
+- `result-victory.mp3`: supplied as "World of Tanks Blitz - Victory Theme - Hawk1000.mp3". Plays once for the winner on the final results screen.
+- `result-defeat.mp3`: supplied as "World of Tanks Blitz - Defeat Theme - Hawk1000.mp3". Plays once for the defeated player on the final results screen.
+- Audio files are unchanged; browser playback uses reduced volume. Music stops during battles; confirming the results switches back to lobby music.

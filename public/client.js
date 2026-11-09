@@ -16,26 +16,30 @@ function setHUDText(id,value){const el=$(id),text=String(value);if(el.textConten
 let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
 let screen='title',connecting=false,connectionNotice='',roomsRequest=0,serverClockOffset=0,resultReturnPending=false;
 function remoteNow(){return Date.now()+serverClockOffset;}
-// One native media player keeps menu playback continuous and avoids overlapping themes.
-const backgroundMusic=new Audio();backgroundMusic.loop=true;backgroundMusic.preload='none';backgroundMusic.volume=.32;
-const musicSources={menu:'/audio/main-theme-wot.mp3',lobby:'/audio/lobby-theme-mw2.mp3'};
-let musicTrack=null,musicPending=false,musicBlocked=false,musicGeneration=0;
-function desiredMusicTrack(){return ['title','menu','rooms','private'].includes(screen)?'menu':screen==='lobby'?'lobby':null;}
+// A single player switches themes without overlap; final result music plays only once.
+const backgroundMusic=new Audio();backgroundMusic.preload='none';backgroundMusic.volume=.32;
+const musicSources={menu:'/audio/main-theme-wot.mp3',lobby:'/audio/lobby-theme-mw2.mp3',victory:'/audio/result-victory.mp3',defeat:'/audio/result-defeat.mp3'};
+let musicTrack=null,musicPending=false,musicBlocked=false,musicGeneration=0,musicFinished=false;
+function isResultMusic(track){return track==='victory'||track==='defeat';}
+function desiredMusicTrack(){
+ if(screen==='results'&&team!==null&&state.winner!==null)return state.winner===team?'victory':'defeat';
+ return ['title','menu','rooms','private'].includes(screen)?'menu':screen==='lobby'?'lobby':null;
+}
 function updateMusicControl(){
- const button=$('menu-music-toggle');button.hidden=desiredMusicTrack()!=='menu';
- const label=spatialAudio.muted?'BGM 켜기':musicBlocked?'음악 재생':musicPending?'음악 로딩…':backgroundMusic.paused?'음악 재생':'BGM 끄기';
- setHUDText('menu-music-toggle',label);button.setAttribute('aria-pressed',String(spatialAudio.muted));button.setAttribute('aria-label',label);
  for(const id of ['audio-toggle','lobby-audio-toggle']){setHUDText(id,spatialAudio.muted?'소리 끔':'소리 켬');$(id).setAttribute('aria-pressed',String(spatialAudio.muted));}
 }
 function syncBackgroundMusic(retry=false){
  const desired=desiredMusicTrack();backgroundMusic.muted=spatialAudio.muted;
  if(musicTrack!==desired){
-  musicGeneration++;backgroundMusic.pause();musicPending=false;musicBlocked=false;musicTrack=desired;
+  musicGeneration++;backgroundMusic.pause();musicPending=false;musicBlocked=false;musicFinished=false;musicTrack=desired;
+  backgroundMusic.loop=desired==='menu'||desired==='lobby';
   if(desired)backgroundMusic.src=musicSources[desired];else{backgroundMusic.removeAttribute('src');backgroundMusic.load();}
  }
  if(!desired||spatialAudio.muted){musicGeneration++;musicPending=false;backgroundMusic.pause();updateMusicControl();return;}
+ // Keep a completed result silent through further snapshots, key presses and clicks.
+ if(isResultMusic(desired)&&(musicFinished||backgroundMusic.ended)){musicFinished=true;updateMusicControl();return;}
  if(!backgroundMusic.paused||musicPending||musicBlocked&&!retry){updateMusicControl();return;}
- // Attempt immediately on page load; retry on a user gesture only if browser policy requires it.
+ // Attempt immediately; a gesture retries only when the browser blocks sound autoplay.
  const generation=musicGeneration;musicPending=true;musicBlocked=false;
  try{Promise.resolve(backgroundMusic.play()).catch(error=>{
   if(generation===musicGeneration&&error.name!=='AbortError')musicBlocked=true;
@@ -44,12 +48,8 @@ function syncBackgroundMusic(retry=false){
  updateMusicControl();
 }
 backgroundMusic.addEventListener('playing',()=>{if(!desiredMusicTrack()||spatialAudio.muted){backgroundMusic.pause();return;}musicBlocked=false;updateMusicControl();});
-backgroundMusic.addEventListener('pause',updateMusicControl);
-$('menu-music-toggle').onclick=()=>{
- const enable=spatialAudio.muted||musicBlocked||!musicPending&&backgroundMusic.paused;
- spatialAudio.setMuted(!enable);syncBackgroundMusic(true);
-};
-function retryMusicFromGesture(e){if(!desiredMusicTrack()||spatialAudio.muted||!backgroundMusic.paused&&!musicBlocked||e.target instanceof Element&&e.target.closest('#menu-music-toggle'))return;if(!e.repeat)syncBackgroundMusic(true);}
+backgroundMusic.addEventListener('ended',()=>{if(isResultMusic(musicTrack)&&backgroundMusic.ended)musicFinished=true;});
+function retryMusicFromGesture(e){const desired=desiredMusicTrack();if(!desired||spatialAudio.muted||isResultMusic(desired)&&musicFinished||!backgroundMusic.paused&&!musicBlocked)return;if(!e.repeat)syncBackgroundMusic(true);}
 for(const type of ['pointerdown','pointerup','keydown'])document.addEventListener(type,retryMusicFromGesture,{capture:true,passive:true});
 let touchScope=false,chatResume=false,adsBlend=0,moveBlend=0,runBlend=0,walkPhase=0,sprintRequested=false,lastWDown=-Infinity;
 let yaw=0,pitch=0,fire=false,jump=false,scoped=false,dragMode=false,dragAim=null,hitUntil=0,damageUntil=0,recoil=0,meleeStarted=0,meleeUntil=0,interact=false;

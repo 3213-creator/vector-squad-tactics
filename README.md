@@ -1,141 +1,135 @@
-# DEATH MATCH — 실시간 1 대 1 FPS
+import {createWeaponModel} from '/weapon-model.js';
+import {loadoutSlots,isSniper,isSidearm} from '/weapons.js';
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {clone as cloneSkeleton} from 'three/addons/utils/SkeletonUtils.js';
+import {CollisionWorld} from '/collision-world.js';
+import {weapons,initial} from '/game.js';
+import {moveBody,look,STEP,EYE,setWorld,setCrates,getWorld,shotOrigin,setDoors,raycastWorld} from '/physics.js';
+import {nearLadder,ladders,doors as doorTemplates} from '/environment.js';
+import {mapData} from '/map-data.js';
+import {SpatialAudio} from '/spatial-audio.js';
+const spatialAudio=new SpatialAudio();
+const $=id=>document.getElementById(id),clamp=THREE.MathUtils.clamp;
+let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
+let touchScope=false,chatResume=false;
+let yaw=0,pitch=0,fire=false,jump=false,scoped=false,dragMode=false,dragAim=null,hitUntil=0,damageUntil=0,recoil=0,meleeStarted=0,meleeUntil=0,interact=false;
+let magazine=null,bolt=null,supportHand=null,mapRoot=null;
+const keys=new Set(),touch={forward:0,strafe:0,active:false};
+try{profileName=localStorage.getItem('vector-name')||'';}catch{}
+$('player-name').value=profileName;$('profile-form').hidden=!!profileName;$('lobby-join').append($('join'));
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1));renderer.outputColorSpace=THREE.SRGBColorSpace;
+const scene=new THREE.Scene();scene.background=new THREE.Color('#8b9fa7');scene.fog=new THREE.Fog('#8b9fa7',35,100);
+scene.add(new THREE.HemisphereLight(0xe3f1ff,0x565a43,2));const sun=new THREE.DirectionalLight(0xffeccb,2.6);sun.position.set(6,14,7);scene.add(sun);
+const camera=new THREE.PerspectiveCamera(80,1,.05,150);camera.rotation.order='YXZ';scene.add(camera);
+const viewModel=new THREE.Group();camera.add(viewModel);const muzzle=new THREE.PointLight(0xffbb44,0,3);muzzle.position.set(.25,-.22,-.7);camera.add(muzzle);
+const lobbyScene=new THREE.Scene();lobbyScene.background=new THREE.Color('#14212a');lobbyScene.fog=new THREE.Fog('#14212a',14,35);lobbyScene.add(new THREE.HemisphereLight(0xcce9ff,0x343c2d,2.5));const light=new THREE.DirectionalLight(0xffe3be,3);light.position.set(-4,6,5);lobbyScene.add(light);
+const lobbyCamera=new THREE.PerspectiveCamera(38,1,.1,60);lobbyCamera.position.set(0,2.6,9);lobbyCamera.lookAt(0,1.5,0);
+const titleCamera=lobbyCamera.clone();const lobbyActors=new THREE.Group();lobbyScene.add(lobbyActors);
+function box(parent,w,h,d,color,x,y,z){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:.75}));m.position.set(x,y,z);parent.add(m);return m;}
+box(lobbyScene,40,.1,35,0x303c3e,0,-.1,0);box(lobbyScene,30,9,.2,0x26343c,0,4,-7);for(let x=-12;x<=12;x+=4){box(lobbyScene,.2,7,.2,0x64737a,x,3.4,-6.8);box(lobbyScene,.12,.05,12,0xa0c3cf,x,5,-1);}lobbyScene.add(new THREE.GridHelper(35,35,0x627272,0x34434a));
+for(const x of [-4,4])box(lobbyScene,1.5,1.1,1.5,0x536048,x,.5,-3);
+const assets={},weaponAssets={},mixers=[],actorObjects=new Map();let lobbyRevision='',assetVersion=0,viewWeapon='';
+function makeActor(key,height){const asset=assets[key];if(!asset)return null;const root=new THREE.Group(),model=cloneSkeleton(asset.scene);model.rotation.y+=key==='soldier'?-Math.PI/2:0;root.add(model);model.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),scale=height/size.y;model.scale.multiplyScalar(scale);model.position.set(-(bounds.min.x+bounds.max.x)*.5*scale,-bounds.min.y*scale,-(bounds.min.z+bounds.max.z)*.5*scale);model.traverse(o=>{if(o.isMesh)o.frustumCulled=false;});let mixer=null,idle=null,run=null;if(asset.animations.length){mixer=new THREE.AnimationMixer(model);const clip=asset.animations.find(a=>/Idle_Neutral/.test(a.name))||asset.animations[0];idle=mixer.clipAction(clip);idle.play();const walk=asset.animations.find(a=>/\|Run$/.test(a.name));if(walk)run=mixer.clipAction(walk);mixers.push(mixer);}const directional={};if(mixer)for(const name of ['Run','Run_Back','Run_Left','Run_Right','Sword_Slash','Interact']){const c=asset.animations.find(a=>a.name.endsWith('|'+name));if(c)directional[name]=mixer.clipAction(c);}return {root,mixer,idle,run,directional,currentAction:'Idle',attackUntil:0,moving:false};}
+function rebuildLobby(){const other=team===null?null:state.players[1-team],sig=[!!other,assetVersion].join();if(sig===lobbyRevision)return;lobbyRevision=sig;lobbyActors.clear();mixers.length=0;for(const [key,x] of [['soldier',other?-1.1:0],...(other?[['swat',1.1]]:[])]){const a=makeActor(key,2.9);if(a){a.root.position.x=x;lobbyActors.add(a.root);}}}
+function weaponIcon(key){const w=weapons[key];return w.model?`<img src="/assets/weapons/${w.model}.webp" alt="${w.name} 모양" loading="lazy">`:'<svg viewBox="0 0 56 40" aria-hidden="true"><path d="M6 28L32 4h15L22 28z M18 25l9 9"/></svg>';}
+function weaponCard(key,onClick,active){const w=weapons[key],b=document.createElement('button');b.className='lobby-weapon'+(active?' active':'');b.dataset.weapon=key;b.setAttribute('aria-pressed',String(active));b.innerHTML=`<span class="weapon-slot">${w.category.toUpperCase()}${active?' · 장착 중':''}</span>${weaponIcon(key)}<strong>${w.name}</strong><span class="weapon-stats"><span>몸통 / 헤드 <b>${w.damage} / ${w.head}</b></span><span>연사 <b>${w.rpm} RPM</b></span><span>장탄 <b>${w.mag??'∞'}</b></span></span><small>${isSniper(key)?'Shift 꾹 누르기':key==='knife'?'근접 전용':w.maker}</small>`;b.onclick=onClick;return b;}
+function currentLoadout(){return team===null?{primary:chosen,secondary:chosenSecondary,melee:'knife'}:{primary:state.units[team].primary,secondary:state.units[team].secondary,melee:'knife'};}
+let loadoutRevision='';
+function renderLoadout(){const loadout=currentLoadout(),disabled=!!state.players[team]?.ready||startPending,revision=JSON.stringify([loadout,disabled]);if(revision===loadoutRevision)return;loadoutRevision=revision;$('lobby-weapons').replaceChildren();for(const slot of loadoutSlots){const key=loadout[slot.key],button=document.createElement('button');button.className='loadout-bar';button.dataset.slot=slot.key;button.disabled=disabled;button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-controls','weapon-picker');button.innerHTML=`<span class="loadout-bar-title"><b>${slot.name}</b><i>0${slot.number}</i></span>${weaponIcon(key)}<strong>${weapons[key].name}</strong><span class="loadout-change">선택 / 변경 ↗</span>`;button.onclick=()=>openWeaponPicker(slot);$('lobby-weapons').append(button);}}
+function openWeaponPicker(slot){if(state.players[team]?.ready||startPending)return;const loadout=currentLoadout();$('weapon-picker-title').textContent=slot.name+' 선택';$('weapon-picker-help').textContent=slot.number+'번 키로 사용할 무기 · 아이콘을 눌러 장착하세요.';$('weapon-options').replaceChildren();for(const [key,w]of Object.entries(weapons)){if(w.slot!==slot.name)continue;$('weapon-options').append(weaponCard(key,()=>{if(team===null){if(slot.key==='primary')chosen=key;if(slot.key==='secondary')chosenSecondary=key;}else send({type:'equip',weapon:key});$('weapon-picker').close();displayLobby();},loadout[slot.key]===key));}$('weapon-picker').showModal();}
+$('close-weapon-picker').onclick=()=>$('weapon-picker').close();$('weapon-picker').addEventListener('click',e=>{if(e.target===$('weapon-picker')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close();}});
+function displayLobby(){
+ const battle=entered&&state.phase==='battle';const chatAnchor=$(battle?'battle-chat-anchor':'lobby-chat-anchor');if($('chat-panel').parentElement!==chatAnchor)chatAnchor.append($('chat-panel'));$('title-screen').hidden=entered;$('lobby').hidden=!entered||battle;$('battle-main').hidden=!battle;document.querySelector('header').hidden=!entered||battle;document.querySelector('footer').hidden=true;
+ const parent=!entered?$('title-viewport'):battle?$('viewport'):$('lobby-viewport');if(renderer.domElement.parentElement!==parent){parent.append(renderer.domElement);requestAnimationFrame(resize);}
+ const me=team===null?null:state.players[team],other=team===null?null:state.players[1-team];$('lobby-coins').textContent=`◉ ${team===null?300:state.units[team].coins}`;$('display-name').textContent=me?.name||profileName||'이름을 설정하세요';$('own-label').textContent=me?.name||profileName||'나의 오퍼레이터';$('own-ready').textContent=me?.ready?'READY / 준비 완료':me?'대기 중':'접속 전';$('opponent-label').hidden=!other;$('enemy-name').textContent=other?.name||'';$('enemy-ready').textContent=other?.ready?'READY / 준비 완료':'입장 · 준비 중';$('lobby').classList.toggle('has-opponent',!!other);
+ const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;for(const value of ['ai','pvp']){const b=$('mode-'+value);b.setAttribute('aria-pressed',String(mode===value));b.disabled=!!me&&(team!==0||(value==='ai'&&humans>1));}$('mode-hint').textContent=humans>1?'두 명 접속 · PVP 대전':mode==='ai'?'혼자 플레이 · 순찰/교전 AI':'같은 방 코드로 친구를 초대하세요';$('launch-help').textContent=mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
+ $('lobby-status').textContent=!assetsReady?'맵과 캐릭터를 불러오는 중입니다.':startPending?'AI 전투에 접속하는 중입니다…':!me?(mode==='ai'?'게임 시작을 누르면 AI 훈련에 바로 접속합니다.':'이름을 저장한 뒤 같은 방으로 접속하세요.'):!other?'상대 접속을 기다리는 중입니다.':other.isBot?'AI 준비 완료 · 게임 시작을 눌러 주세요.':me.ready?'상대의 준비를 기다리는 중입니다.':`${other.name} 님이 입장했습니다. 시작을 눌러 주세요.`;
+ $('start-game').disabled=!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').hidden=!me;$('create-room').disabled=!!me;$('browser-create').disabled=!!me;$('room').disabled=!!me;$('join').querySelector('button').disabled=!!me;
+ renderLoadout();rebuildLobby();
+ if(battle&&$('weapon-picker').open)$('weapon-picker').close();if(battle&&!inBattle)startBattle();if(!battle&&inBattle)leaveBattle();
+}
+function send(a){if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(a));}
+$('press-start').onclick=()=>{spatialAudio.unlock();entered=true;displayLobby();$('room-player-name').value=profileName;$('room-browser').showModal();refreshRooms();};
+$('edit-name').onclick=()=>{$('profile-form').hidden=false;$('player-name').focus();};
+$('profile-form').onsubmit=e=>{e.preventDefault();const name=$('player-name').value.trim();if(!name||Array.from(name).length>12)return;profileName=name;try{localStorage.setItem('vector-name',name);}catch{}if(team!==null)send({type:'profile',name});$('profile-form').hidden=true;displayLobby();if(startPending){startPending=false;launchGame();}};
+function connectRoom(autoStart=false,options={}){if(!profileName){$('profile-form').hidden=false;$('player-name').focus();return;}if(socket&&socket.readyState<2)return;startPending=autoStart;socket=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}`);$('connection').textContent='● CONNECTING';displayLobby();socket.onopen=()=>send({type:'join',room:$('room').value.trim(),name:profileName,weapon:chosen,primary:chosen,secondary:chosenSecondary,mode:chosenMode,...options});socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='chatHistory'){ $('chat-messages').replaceChildren();for(const message of m.messages)addChat(message);}if(m.type==='chat')addChat(m.message);if(m.type==='joined'){ $('room-browser').close();$('chat-messages').replaceChildren();team=m.team;$('connection').textContent='● ONLINE';}if(m.type==='state'){receive(m.state);if(startPending){startPending=false;if(m.state.mode==='ai'&&m.state.phase==='lobby'&&m.state.players[1]?.isBot)send({type:'ready'});displayLobby();}}if(m.type==='error'||m.type==='closed'){startPending=false;displayLobby();$('lobby-status').textContent=m.message;$('match-notice').textContent=m.message;$('shop-status').textContent=m.message;$('chat-status').textContent=m.message;$('rooms-status').textContent=m.message;if(team===null)socket.close();}};socket.onclose=()=>{startPending=false;team=null;state=initial();pending=[];$('connection').textContent='● OFFLINE';displayLobby();};socket.onerror=()=>{$('lobby-status').textContent='서버에 연결할 수 없습니다. 잠시 후 다시 참가하세요.';};}
+$('join').onsubmit=e=>{e.preventDefault();connectRoom();};
+for(const mode of ['ai','pvp'])$('mode-'+mode).onclick=()=>{if(team===null){chosenMode=mode;displayLobby();}else send({type:'mode',mode});};
+$('return-lobby').onclick=()=>send({type:'leaveMatch'});
+function launchGame(){if(!assetsReady||startPending)return;if(team!==null){send({type:'ready'});return;}if(chosenMode!=='ai')return;if(!profileName){startPending=true;$('profile-form').hidden=false;$('player-name').focus();return;}$('room').value='AI_'+crypto.randomUUID().replaceAll('-','').slice(0,18);connectRoom(true,{private:true,createOnly:true});}
+$('start-game').onclick=launchGame;
+function startBattle(){spatialAudio.unlock();for(const mark of impactObjects.values()){impactLayer.remove(mark);mark.geometry.dispose();}impactObjects.clear();inBattle=true;lastEvent=state.clock;pending=[];predicted={...state.units[team]};yaw=predicted.yaw;pitch=predicted.pitch;actorObjects.clear();const enemy=makeActor('swat',1.75);if(enemy){scene.add(enemy.root);actorObjects.set(1-team,enemy);}scoped=false;viewWeapon='';$('capture-overlay').hidden=false;$('capture-title').textContent='실시간 1인칭 전투';$('capture-help').textContent='WASD 이동 · 마우스 조준 · 터치패드 탭/클릭으로 발사 · SPACE 점프';updateHUD();}
+function leaveBattle(){inBattle=false;fire=false;keys.clear();pending=[];scoped=false;predicted=null;for(const actor of actorObjects.values())scene.remove(actor.root);actorObjects.clear();document.exitPointerLock?.();$('death-overlay').hidden=true;}
+function receive(next){const wasDead=state.units[team]?.hp<=0,oldHp=state.units[team]?.hp;state=next;setCrates(state.crates);setDoors(state.doors);if(state.phase!=='battle'){displayLobby();return;}if(!inBattle){displayLobby();return;}
+ const own=state.units[team];if(own.ladder!==null)scoped=false;pending=pending.filter(i=>i.seq>own.ack);predicted={...own};for(const input of pending)moveBody(predicted,input);if(!wasDead&&own.hp<=0){$('shop-status').textContent='';keys.clear();fire=false;document.exitPointerLock?.();$('capture-overlay').hidden=true;}if(wasDead&&own.hp>0){$('capture-title').textContent='부활 완료';$('capture-help').textContent='클릭하여 전투를 재개하세요. 3초간 부활 보호가 적용됩니다.';$('capture-overlay').hidden=!!document.pointerLockElement||touch.active;yaw=own.yaw;pitch=own.pitch;pending=[];predicted={...own};}if(oldHp!==undefined&&own.hp<oldHp)damageUntil=performance.now()+250;
+ for(const e of state.events){if(e.id<=lastEvent)continue;lastEvent=e.id;if(e.type==='shot'){if(e.actor===team){if(e.weapon!=='knife'){recoil=1;muzzle.intensity=4;}}if(e.weapon!=='knife')spatialAudio.play(weapons[e.weapon]?.category==='smg'?'rifle':weapons[e.weapon]?.category||e.weapon,[e.x,e.y,e.z],e.actor===team?.8:1);}if(e.type==='footstep')spatialAudio.play(Math.random()<.5?'step1':'step2',[e.x,e.y,e.z],e.actor===team?.35:.8);if(e.type==='grenadeThrow')spatialAudio.play('throw',[e.x,e.y,e.z],.6);if(e.type==='purchase'&&e.actor===team){$('shop-status').textContent='구매 완료 · 50코인 차감';sound('hit');}if(e.type==='melee'){if(e.actor===team){meleeStarted=performance.now();meleeUntil=meleeStarted+380;recoil=0;muzzle.intensity=0;buildViewWeapon('knife');}else{const actor=actorObjects.get(e.actor);const slash=actor?.directional.Sword_Slash;if(slash){actor.mixer.stopAllAction();slash.setLoop(THREE.LoopOnce,1);slash.clampWhenFinished=true;slash.reset().play();actor.attackUntil=performance.now()+500;actor.currentAction='Sword_Slash';}}}if(e.type==='hit'&&e.actor===team&&e.target!==team){hitUntil=performance.now()+140;sound('hit');}if(e.type==='loot'&&e.actor===team){$('match-notice').textContent=e.loot==='life'?'목숨 +1 획득':'예비 탄약 +30 획득';lootMessage=e.loot==='life'?'목숨 +1 획득':'예비 탄약 +30 획득';lootUntil=performance.now()+2000;sound('hit');}if(e.type==='explosion'){const flash=new THREE.Mesh(new THREE.SphereGeometry(.5,8,6),new THREE.MeshBasicMaterial({color:0xffb548,transparent:true,opacity:.7}));flash.position.set(e.x,e.y,e.z);scene.add(flash);setTimeout(()=>{scene.remove(flash);flash.geometry.dispose();flash.material.dispose();},250);spatialAudio.play('explosion',[e.x,e.y,e.z],1);}}
+ syncImpacts();updateHUD();}
+function buildViewWeapon(key){viewWeapon=key;magazine=bolt=supportHand=null;viewModel.position.set(0,0,0);viewModel.rotation.set(0,0,0);viewModel.scale.setScalar(1);viewModel.traverse(o=>{o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose();});viewModel.clear();
+ if(key==='knife'){box(viewModel,.045,.05,.55,0xbbced7,.25,-.28,-.55);box(viewModel,.12,.045,.08,0x29372e,.25,-.28,-.27);}else if(weaponAssets[key]){const gun=createWeaponModel(weaponAssets[key],key),side=isSidearm(key),x=side?.175:.25;gun.position.set(x,side?-.175:-.25,isSniper(key)?-1.18:side?-.65:-.93);viewModel.add(gun);magazine=box(viewModel,.065,.17,.11,0x26343b,x,-.39,-.43);magazine.visible=false;magazine.userData.rest=magazine.position.clone();bolt=box(viewModel,.04,.025,.055,0x68737c,x+.08,-.21,-.46);bolt.visible=false;bolt.userData.rest=bolt.position.clone();}
+ box(viewModel,.13,.15,.27,0x8d7560,.25,-.43,-.25);supportHand=box(viewModel,.12,.13,.22,0x967c62,.12,-.37,-.58);supportHand.userData.rest=supportHand.position.clone();}
 
-업로드된 3D 맵에서 각자 1인칭 카메라로 이동·점프·조준·교전하는 브라우저 FPS입니다. 턴이나 AP, 칸 이동은 없습니다. 이름 설정 → 로비 → AI 출격 또는 양쪽 준비 → 실시간 결투 → 리스폰/승패 → 로비 흐름입니다.
+function activeControl(){return document.activeElement!==$('chat-input')&&inBattle&&(document.pointerLockElement===renderer.domElement||dragMode||touch.active)&&state.units[team]?.hp>0&&state.winner===null;}
+function swap(key){if(!inBattle)return;scoped=false;send({type:'equip',weapon:key});}
+function slot(n){const u=state.units[team];if(u)swap(n===1?u.primary:n===2?u.secondary:'knife');}
+function command(type){if(activeControl())send({type});}
+async function capture(){if(!inBattle)return;spatialAudio.unlock();if(matchMedia('(pointer: coarse)').matches){touch.active=true;$('capture-overlay').hidden=true;return;}try{await renderer.domElement.requestPointerLock();}catch{$('capture-help').textContent='브라우저가 마우스 잠금을 차단했습니다. 새 탭에서 게임 링크를 열거나 드래그 조작을 사용하세요.';$('fallback-mouse').hidden=false;}}
+$('capture-mouse').onclick=capture;$('fallback-mouse').onclick=()=>{dragMode=true;$('capture-overlay').hidden=true;};
+document.addEventListener('pointerlockchange',()=>{const locked=document.pointerLockElement===renderer.domElement;if(inBattle){$('capture-overlay').hidden=state.units[team]?.hp<=0||state.winner!==null||locked||dragMode||touch.active;if(!locked){fire=false;keys.clear();}}});
+document.addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*(scoped?.00055:.002);pitch=clamp(pitch-e.movementY*(scoped?.00055:.002),-1.48,1.48);});
+document.addEventListener('keydown',e=>{if(!entered&&(e.key==='Enter'||e.code==='Space')){e.preventDefault();$('press-start').click();return;}if(/INPUT|TEXTAREA/.test(e.target.tagName))return;if(entered&&e.code==='KeyM'){e.preventDefault();focusChat();return;}if(!inBattle)return;if(['Space','ArrowUp','ArrowDown','Enter','NumpadEnter'].includes(e.code))e.preventDefault();keys.add(e.code);if(e.repeat)return;if(e.code==='Space')jump=true;if(e.code==='KeyF')interact=true;if(e.code==='KeyR')command('reload');if(e.code==='KeyV')command('melee');if(e.code==='KeyG')command('grenade');if(/^Digit[123]$/.test(e.code))slot(Number(e.code.slice(-1)));if(e.code==='Escape'){dragMode=false;touch.active=false;fire=false;$('capture-overlay').hidden=false;}inputFrame();});
+document.addEventListener('keyup',e=>{keys.delete(e.code);inputFrame();});window.addEventListener('blur',()=>{keys.clear();scoped=false;touchScope=false;fire=false;touch.forward=touch.strafe=0;});
+renderer.domElement.addEventListener('pointerdown',e=>{if(!inBattle)return;if(e.pointerType==='touch'){touch.active=true;dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);return;}if(e.button===0&&activeControl()){fire=true;inputFrame();if(dragMode){dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);}}});
+renderer.domElement.addEventListener('pointermove',e=>{if(!dragAim||dragAim.id!==e.pointerId)return;yaw-=(e.clientX-dragAim.x)*.004;pitch=clamp(pitch-(e.clientY-dragAim.y)*.004,-1.48,1.48);dragAim.x=e.clientX;dragAim.y=e.clientY;});
+window.addEventListener('pointerup',e=>{if(e.button===0){fire=false;inputFrame();}if(dragAim?.id===e.pointerId)dragAim=null;});renderer.domElement.addEventListener('pointercancel',()=>{fire=false;dragAim=null;inputFrame();});renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+renderer.domElement.addEventListener('wheel',e=>{if(!activeControl())return;e.preventDefault();const u=state.units[team],list=[u.primary,u.secondary,'knife'];swap(list[(list.indexOf(u.weapon)+(e.deltaY>0?1:2))%3]);},{passive:false});
+$('touch-fire').onpointerdown=e=>{e.preventDefault();touch.active=true;fire=true;inputFrame();e.target.setPointerCapture(e.pointerId);};$('touch-fire').onpointerup=()=>{fire=false;inputFrame();};$('touch-fire').onpointercancel=()=>{fire=false;inputFrame();};
+$('touch-interact').onclick=()=>{interact=true;inputFrame();};$('touch-jump').onclick=()=>{jump=true;};$('touch-reload').onclick=()=>command('reload');$('touch-melee').onclick=()=>command('melee');$('touch-grenade').onclick=()=>command('grenade');$('touch-scope').onpointerdown=e=>{e.preventDefault();touchScope=true;touch.active=true;e.target.setPointerCapture(e.pointerId);inputFrame();};for(const type of ['pointerup','pointercancel'])$('touch-scope').addEventListener(type,()=>{touchScope=false;inputFrame();});
+$('joystick').onpointerdown=e=>{touch.active=true;e.currentTarget.setPointerCapture(e.pointerId);};$('joystick').onpointermove=e=>{if(!e.currentTarget.hasPointerCapture(e.pointerId))return;const r=e.currentTarget.getBoundingClientRect();touch.strafe=clamp((e.clientX-r.left-r.width/2)/40,-1,1);touch.forward=clamp(-(e.clientY-r.top-r.height/2)/40,-1,1);e.currentTarget.firstElementChild.style.transform=`translate(${touch.strafe*25}px,${-touch.forward*25}px)`;};for(const type of ['pointerup','pointercancel'])$('joystick').addEventListener(type,()=>{touch.forward=touch.strafe=0;$('joystick').firstElementChild.style.transform='';});
+function inputFrame(){if(!inBattle||!predicted||socket?.readyState!==WebSocket.OPEN||state.winner!==null)return;if(predicted.ladder!==null)scoped=false;const enabled=activeControl();scoped=enabled&&isSniper(state.units[team]?.weapon)&&predicted.ladder===null&&(touchScope||keys.has('ShiftLeft')||keys.has('ShiftRight'));const input={type:'input',seq:++seq,yaw,pitch,forward:enabled?touch.forward+(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0):0,strafe:enabled?touch.strafe+(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0):0,jump:enabled&&jump,interact:enabled&&interact,sprint:enabled&&!isSniper(state.units[team]?.weapon)&&(keys.has('ShiftLeft')||keys.has('ShiftRight')),fire:enabled&&fire,scoped};jump=false;interact=false;send(input);pending.push(input);if(pending.length>90)pending.shift();moveBody(predicted,input);spatialAudio.updateListener(predicted,yaw,pitch);radar();}
+const minimapImage=new Image();minimapImage.src='/assets/minimap.webp';
+function radar(){const ctx=$('minimap').getContext('2d');ctx.fillStyle='#233331';ctx.fillRect(0,0,192,128);if(minimapImage.complete&&minimapImage.naturalWidth)ctx.drawImage(minimapImage,0,0,192,128);else{ctx.fillStyle='#78877f';for(const w of mapData.walls)ctx.fillRect(w.x*8,w.z*8,8,8);}if(team===null)return;const u=predicted||state.units[team],x=(u.x+12)*8,z=(u.z+8)*8,color=team===0?'#75cbff':'#ff8877';$('minimap-player-label').textContent='내 위치 · '+(team===0?'BLUE':'RED');ctx.save();ctx.translate(x,z);ctx.rotate(-(predicted?yaw:u.yaw));ctx.fillStyle='#ffffff';ctx.beginPath();ctx.moveTo(0,-9);ctx.lineTo(-3,-4);ctx.lineTo(3,-4);ctx.closePath();ctx.fill();ctx.restore();ctx.beginPath();ctx.arc(x,z,4,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.lineWidth=1.5;ctx.strokeStyle='#fff';ctx.stroke();}
+function updateHUD(){if(team===null)return;const u=state.units[team],enemy=state.units[1-team],w=weapons[u.weapon];$('battle-mode').textContent=state.mode==='ai'?'DEATH MATCH / AI TRAINING':'DEATH MATCH / PVP';$('battle-coins').textContent=`◉ ${u.coins}`;$('battle-name').textContent=state.players[team]?.name||'OPERATOR';$('lives').textContent=Array.from({length:Math.max(3,Math.min(u.lives,7))},(_,i)=>i<u.lives?'♥':'♡').join(' ')+(u.lives>7?` +${u.lives-7}`:'');$('life-label').textContent=`남은 목숨 ${u.lives} · 시작 3개`;$('enemy-lives').textContent=`상대 목숨 ${enemy.lives}`;$('hp-text').textContent=`${u.hp}${u.armor>0?' + 보호막 '+u.armor:''}`;$('hp-fill').style.width=u.hp+'%';$('grenade-count').textContent=`G 수류탄 ${u.grenades}`;$('equipped-name').textContent=w.name;$('ammo-current').textContent=w.mag===null?'∞':u.ammo[u.weapon];$('ammo-max').textContent=w.mag===null?' / 근접':` / ${w.mag}`;$('reload-status').textContent=u.reloadUntil?'재장전 중…':`R 재장전 · 예비탄 ${u.reserve[u.weapon]??'—'}`;if(!isSniper(u.weapon))scoped=false;const desiredView=performance.now()<meleeUntil?'knife':u.weapon;if(viewWeapon!==desiredView)buildViewWeapon(desiredView);
+ $('weapon-strip').replaceChildren();for(const [i,key] of [u.primary,u.secondary,'knife'].entries()){const b=document.createElement('button');b.textContent=`${i+1} ${weapons[key].name}`;b.className=u.weapon===key?'selected':'';b.onclick=()=>swap(key);$('weapon-strip').append(b);}radar();
+ $('death-overlay').hidden=u.hp>0&&state.winner===null;if(state.winner!==null){$('death-title').textContent=state.winner===team?'VICTORY':'DEFEAT';$('death-text').textContent='세 목숨 결투 종료 · 잠시 후 로비로 돌아갑니다.';fire=false;document.exitPointerLock?.();}else if(u.hp<=0){$('death-title').textContent='DOWN';$('death-text').textContent=`${Math.max(0,(u.respawnAt-Date.now())/1000).toFixed(1)}초 후 무료 부활 · 남은 목숨 ${u.lives}`;fire=false;}
+ $('respawn-shop').hidden=u.hp>0||state.winner!==null||u.lives<=0;$('shop-coins').textContent=`◉ ${u.coins}`;for(const item of ['damage','shield','reveal']){const button=$('buy-'+item);button.disabled=!!u.pendingUpgrades[item]||u.coins<50;button.classList.toggle('purchased',!!u.pendingUpgrades[item]);}
+ $('match-notice').textContent=performance.now()<lootUntil?lootMessage:u.shieldUntil>Date.now()?`부활 보호 ${Math.max(0,(u.shieldUntil-Date.now())/1000).toFixed(1)}초`:u.reloadUntil?'재장전 중…':u.ladder!==null?'F 놓기 · W/S 오르내리기 · Space 뛰어내리기':nearLadder(u)?'F 사다리 잡기':state.doors.some(d=>!d.open&&Math.hypot(u.x-d.x,u.z-d.z)<1.6)?'W 문 열고 이동':'';
+}
+for(const item of ['damage','shield','reveal'])$('buy-'+item).onclick=()=>{$('shop-status').textContent='';send({type:'buy',item});};
+for(const id of ['audio-toggle','lobby-audio-toggle'])$(id).onclick=()=>{spatialAudio.unlock();spatialAudio.setMuted(!spatialAudio.muted);for(const buttonId of ['audio-toggle','lobby-audio-toggle']){$(buttonId).textContent=spatialAudio.muted?'소리 끔':'소리 켬';$(buttonId).setAttribute('aria-pressed',String(spatialAudio.muted));}};
+let lootMessage='',lootUntil=0;
+const spawnShields=new Map();for(const id of [0,1]){const shield=new THREE.Mesh(new THREE.SphereGeometry(1.03,20,14),new THREE.MeshBasicMaterial({color:0x267ee8,side:THREE.FrontSide}));shield.visible=false;scene.add(shield);spawnShields.set(id,shield);}
+const impactLayer=new THREE.Group();impactLayer.name='bullet-impacts';scene.add(impactLayer);const impactObjects=new Map();let impactMaterial=null;
+function syncImpacts(){if(!inBattle)return;if(!impactMaterial){const canvas=document.createElement('canvas');canvas.width=canvas.height=64;const c=canvas.getContext('2d'),gradient=c.createRadialGradient(32,32,3,32,32,30);gradient.addColorStop(0,'rgba(4,3,2,.98)');gradient.addColorStop(.25,'rgba(18,13,8,.95)');gradient.addColorStop(.55,'rgba(37,26,17,.7)');gradient.addColorStop(1,'rgba(25,18,10,0)');c.fillStyle=gradient;c.fillRect(0,0,64,64);c.strokeStyle='rgba(12,9,5,.8)';for(let i=0;i<9;i++){const a=i*2.4;c.beginPath();c.moveTo(32+Math.cos(a)*7,32+Math.sin(a)*7);c.lineTo(32+Math.cos(a)*22,32+Math.sin(a)*22);c.stroke();}impactMaterial=new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(canvas),transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,side:THREE.DoubleSide});}
+for(const hit of state.impacts||[]){if(impactObjects.has(hit.id))continue;const normal=new THREE.Vector3(...hit.n).normalize();let point=new THREE.Vector3(...hit.p);if(mapRoot){const ray=new THREE.Raycaster(point.clone().addScaledVector(normal,.25),normal.clone().negate(),0,.5),exact=ray.intersectObject(mapRoot,true)[0];if(exact)point=exact.point;}const mark=new THREE.Mesh(new THREE.PlaneGeometry(.14,.14),impactMaterial);mark.position.copy(point).addScaledVector(normal,.005);mark.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),normal);mark.rotateZ(hit.id*2.4);impactLayer.add(mark);impactObjects.set(hit.id,mark);}for(const [id,mark]of impactObjects){if(!state.impacts.some(h=>h.id===id)){impactLayer.remove(mark);mark.geometry.dispose();impactObjects.delete(id);}}}
+function poseWeapon(time){const u=state.units[team];viewModel.rotation.set(0,0,0);viewModel.position.set(0,Math.sin(time*.012)*.008*((keys.has('KeyW')||keys.has('KeyS'))?1:0)-recoil*.03,0);if(magazine){magazine.position.copy(magazine.userData.rest);magazine.visible=!!u.reloadUntil;}if(bolt){bolt.position.copy(bolt.userData.rest);bolt.visible=!!u.reloadUntil;}if(supportHand)supportHand.position.copy(supportHand.userData.rest);
+if(time<meleeUntil){const p=clamp((time-meleeStarted)/380,0,1),swing=Math.sin(p*Math.PI);viewModel.rotation.set(-.15*swing,1.0*swing,-.65*swing);viewModel.position.x=-.2*swing;viewModel.position.z=-.12*swing;muzzle.intensity=0;return;}if(viewWeapon!==u.weapon)buildViewWeapon(u.weapon);
+if(u.reloadUntil&&weapons[u.weapon].mag!==null){const p=clamp(1-(u.reloadUntil-Date.now())/weapons[u.weapon].reload,0,1),tilt=Math.sin(Math.PI*clamp(p/.18,0,1)/2)*Math.min(1,(1-p)/.12);viewModel.rotation.set(.22*tilt,-.15*tilt,-.6*tilt);viewModel.position.y-=.07*tilt;let pull;if(p<.32)pull=p/.32;else if(p<.46)pull=1;else pull=Math.max(0,1-(p-.46)/.3);if(magazine){magazine.position.y-=pull*.4;magazine.position.x-=Math.sin(p*Math.PI)*.12;}if(supportHand){supportHand.position.y-=pull*.28;supportHand.position.x-=pull*.12;if(p>.78&&p<.96){const boltPull=Math.sin((p-.78)/.18*Math.PI);supportHand.position.set(.36,-.22,-.44+boltPull*.13);if(bolt)bolt.position.z+=boltPull*.13;}}$('reload-status').textContent=p<.34?'탄창 분리':p<.76?'새 탄창 삽입':'장전 손잡이 · 준비';}}
+const doorObjects=new Map();for(const d of doorTemplates){const root=new THREE.Group(),axis=d.axis==='x'?-Math.PI/2:0;root.position.set(d.x-(d.axis==='z'?d.width/2:0),0,d.z-(d.axis==='x'?d.width/2:0));root.rotation.y=axis;root.userData.base=axis;root.userData.angle=0;box(root,d.width,d.height,.075,0x66513a,d.width/2,d.height/2,0);for(let i=1;i<5;i++)box(root,.016,d.height-.08,.082,0x392c20,i*d.width/5,d.height/2,0);box(root,.07,.07,.1,0xb5ad82,d.width-.12,1,.075);scene.add(root);doorObjects.set(d.id,root);if(d.axis==='z'){box(scene,.07,d.height+.05,.15,0x4c4032,d.x-d.width/2-.025,d.height/2,d.z);box(scene,.07,d.height+.05,.15,0x4c4032,d.x+d.width/2+.025,d.height/2,d.z);box(scene,d.width+.12,.08,.15,0x4c4032,d.x,d.height+.02,d.z);}else{box(scene,.15,d.height+.05,.07,0x4c4032,d.x,d.height/2,d.z-d.width/2-.025);box(scene,.15,d.height+.05,.07,0x4c4032,d.x,d.height/2,d.z+d.width/2+.025);box(scene,.15,.08,d.width+.12,0x4c4032,d.x,d.height+.02,d.z);}}
+let audio=null;function sound(type){if(spatialAudio.muted)return;try{audio??=new AudioContext();if(audio.state==='suspended')audio.resume();const osc=audio.createOscillator(),gain=audio.createGain();osc.connect(gain);gain.connect(audio.destination);osc.type=type==='hit'?'sine':'sawtooth';osc.frequency.setValueAtTime(type==='shot'?130:type==='boom'?50:type==='hit'?900:220,audio.currentTime);osc.frequency.exponentialRampToValueAtTime(30,audio.currentTime+.08);gain.gain.setValueAtTime(.025,audio.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.1);osc.start();osc.stop(audio.currentTime+.11);}catch{}}
+function resize(){const el=renderer.domElement.parentElement;if(!el?.clientWidth||!el.clientHeight)return;renderer.setSize(el.clientWidth,el.clientHeight);const cam=!entered?titleCamera:inBattle?camera:lobbyCamera;cam.aspect=el.clientWidth/el.clientHeight;if(cam!==camera){cam.position.z=cam.aspect<.7?12:9;cam.lookAt(0,1.5,0);}cam.updateProjectionMatrix();}
+const observer=new ResizeObserver(resize);for(const id of ['title-viewport','lobby-viewport','viewport'])observer.observe($(id));
+const inputTimer=setInterval(inputFrame,1000/30);window.addEventListener('beforeunload',()=>clearInterval(inputTimer));
+const grenadeObjects=new Map(),crateObjects=new Map();let lastTime=0;
+renderer.setAnimationLoop(time=>{if(time-lastTime<1000/30)return;const dt=Math.min((time-lastTime)/1000,.08);lastTime=time;if(!entered)return;for(const m of mixers)m.update(dt);if(inBattle){if(predicted){const target=new THREE.Vector3(predicted.x,predicted.y+EYE,predicted.z);if(camera.position.distanceTo(target)>3)camera.position.copy(target);else camera.position.lerp(target,Math.min(1,dt*28));camera.rotation.set(pitch+recoil*.025,yaw,0,'YXZ');}camera.fov=THREE.MathUtils.lerp(camera.fov,scoped?20:80,Math.min(1,dt*14));camera.updateProjectionMatrix();camera.updateMatrixWorld(true);if(predicted){const aimUnit={...predicted,yaw,pitch,weapon:state.units[team].weapon,scoped},origin=shotOrigin(aimUnit),direction=look(yaw,pitch),ray=new THREE.Ray(origin,direction);let distance=raycastWorld(ray)?.distance??80;for(const c of state.crates){if(c.broken)continue;const hit=ray.intersectBox(new THREE.Box3(new THREE.Vector3(c.x-.4,c.y,c.z-.4),new THREE.Vector3(c.x+.4,c.y+.75,c.z+.4)),new THREE.Vector3());if(hit)distance=Math.min(distance,origin.distanceTo(hit));}const point=origin.addScaledVector(direction,Math.max(.05,distance)).project(camera);$('crosshair').style.left=`${clamp((point.x*.5+.5)*100,1,99)}%`;$('crosshair').style.top=`${clamp((-point.y*.5+.5)*100,1,99)}%`;}$('scope').hidden=!scoped;$('crosshair').hidden=scoped;viewModel.visible=!scoped&&state.units[team]?.hp>0&&predicted?.ladder===null;poseWeapon(time);for(const d of state.doors){const mesh=doorObjects.get(d.id);mesh.userData.angle=THREE.MathUtils.lerp(mesh.userData.angle,d.open?1:0,Math.min(1,dt*9));mesh.rotation.y=mesh.userData.base+mesh.userData.angle*Math.PI/2*(d.axis==='z'?-d.nz:d.nx);}recoil=Math.max(0,recoil-dt*8);muzzle.intensity=Math.max(0,muzzle.intensity-dt*60);$('hit-marker').hidden=time>hitUntil;$('damage-flash').style.opacity=time<damageUntil?'.5':'0';for(const u of state.units){const shield=spawnShields.get(u.id);shield.visible=u.hp>0&&u.shieldUntil>Date.now();const pos=u.id===team&&predicted?predicted:u;shield.position.set(pos.x,pos.y+.86,pos.z);}$('spawn-shield-overlay').hidden=state.units[team].hp<=0||state.units[team].shieldUntil<=Date.now();for(const [id,actor] of actorObjects){const u=state.units[id];actor.root.visible=u.hp>0;actor.root.position.lerp(new THREE.Vector3(u.x,u.y,u.z),Math.min(1,dt*18));actor.root.rotation.y=u.yaw+Math.PI;const revealed=state.units[team].thermalUntil>Date.now();if(actor.revealed!==revealed){actor.root.traverse(o=>{if(!o.isMesh)return;if(revealed){o.userData.baseMaterial=o.material;o.material=new THREE.MeshBasicMaterial({color:0xff9c38,transparent:true,opacity:.8,depthTest:false,depthWrite:false});o.renderOrder=10;}else if(o.userData.baseMaterial){o.material.dispose();o.material=o.userData.baseMaterial;o.renderOrder=0;}});actor.revealed=revealed;}if(time<actor.attackUntil)continue;const forward=u.vx*(-Math.sin(u.yaw))+u.vz*(-Math.cos(u.yaw)),right=u.vx*Math.cos(u.yaw)-u.vz*Math.sin(u.yaw);let anim=u.ladder!==null?'Interact':Math.hypot(u.vx,u.vz)<.3?'Idle':Math.abs(forward)>=Math.abs(right)?forward>=0?'Run':'Run_Back':right>=0?'Run_Right':'Run_Left';if(anim!==actor.currentAction){actor.mixer?.stopAllAction();(anim==='Idle'?actor.idle:actor.directional[anim]||actor.run)?.reset().play();actor.currentAction=anim;}}
 
-게임: https://vector-squad-tactics.onrender.com
+ for(const c of state.crates){let obj=crateObjects.get(c.id);const version=c.broken?'loot':'box';if(obj?.userData.version!==version){if(obj){scene.remove(obj);obj.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});}obj=new THREE.Group();obj.userData.version=version;if(!c.broken){box(obj,.8,.75,.8,0x775539,0,.375,0);box(obj,.84,.07,.84,0xaca074,0,.72,0);box(obj,.07,.7,.82,0x332e23,-.27,.36,0);box(obj,.07,.7,.82,0x332e23,.27,.36,0);}else{box(obj,.28,.35,.24,c.loot==='life'?0x70e1b0:0xe9c16d,0,.4,0);if(c.loot==='life'){box(obj,.2,.05,.03,0xffffff,0,.42,.14);box(obj,.05,.2,.03,0xffffff,0,.42,.14);}}scene.add(obj);crateObjects.set(c.id,obj);}obj.visible=!c.taken;obj.position.set(c.x,c.y+(c.broken?Math.sin(time*.003)*.08:0),c.z);}
+ for(const [id,obj] of crateObjects)if(!state.crates.some(c=>c.id===id)){scene.remove(obj);obj.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});crateObjects.delete(id);}
+ for(const g of state.grenades){let mesh=grenadeObjects.get(g.id);if(!mesh){mesh=new THREE.Mesh(new THREE.SphereGeometry(.12,8,6),new THREE.MeshStandardMaterial({color:0x76854c}));scene.add(mesh);grenadeObjects.set(g.id,mesh);}mesh.position.set(g.x,g.y,g.z);}for(const [id,mesh] of grenadeObjects)if(!state.grenades.some(g=>g.id===id)){scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();grenadeObjects.delete(id);}renderer.render(scene,camera);
+ }else renderer.render(lobbyScene,lobbyCamera);});
+async function loadAssets(){try{await Promise.all([...Object.entries(weapons).filter(([,w])=>w.model).map(async([key,w])=>{weaponAssets[key]=(await new GLTFLoader().loadAsync(`/assets/weapons/${w.model}.glb`)).scene;}),...['soldier','swat','arena','collision'].map(async key=>{const gltf=await new GLTFLoader().loadAsync(`/assets/${key}.glb?v=5`);if(key!=='collision')gltf.scene.traverse(o=>{if(!o.isMesh)return;const convert=m=>new THREE.MeshLambertMaterial({color:m.color,vertexColors:m.vertexColors,side:key==='arena'?THREE.DoubleSide:m.side,transparent:m.transparent,opacity:m.opacity});o.material=Array.isArray(o.material)?o.material.map(convert):convert(o.material);});if(key==='arena'){gltf.scene.scale.setScalar(mapData.scale);scene.add(gltf.scene);mapRoot=gltf.scene;}else if(key==='collision'){gltf.scene.scale.setScalar(mapData.scale);gltf.scene.updateMatrixWorld(true);setWorld(new CollisionWorld(gltf.scene));}else assets[key]=gltf;assetVersion++;displayLobby();})]);assetsReady=true;$('asset-status').textContent='REAL-TIME FPS · 맵/캐릭터/충돌 준비 완료';displayLobby();}catch(error){console.error(error);$('asset-status').textContent='3D 에셋을 불러오지 못했습니다. 새로고침해 주세요.';}}
+displayLobby();loadAssets();
 
-## 조작
+function addChat(message){if(message.team===team&&$('chat-input').value.trim()===message.text)$('chat-input').value='';const row=document.createElement('div'),name=document.createElement('b'),body=document.createElement('span');name.textContent=message.name+': ';name.style.color=message.team===0?'#75cbff':'#ff8877';body.textContent=message.text;row.append(name,body);$('chat-messages').append(row);while($('chat-messages').children.length>30)$('chat-messages').firstElementChild.remove();$('chat-messages').scrollTop=$('chat-messages').scrollHeight;$('chat-status').textContent='같은 방 채팅 · M 입력';}
+function focusChat(){chatResume=!!document.pointerLockElement||dragMode;keys.clear();fire=false;scoped=false;touchScope=false;inputFrame();document.exitPointerLock?.();setTimeout(()=>$('chat-input').focus(),0);}
+$('chat-input').addEventListener('focus',()=>{keys.clear();fire=false;scoped=false;touchScope=false;inputFrame();});
+function finishChat(){ $('chat-input').blur();if(inBattle&&chatResume){chatResume=false;capture();}}
+$('chat-input').addEventListener('keydown',e=>{e.stopPropagation();if(e.code==='Escape'){e.preventDefault();finishChat();}});
+$('chat-form').onsubmit=e=>{e.preventDefault();const text=$('chat-input').value.trim();if(!text)return;if(team===null){$('chat-status').textContent='먼저 방 참가 또는 AI 게임 시작으로 접속하세요.';return;}send({type:'chat',text});finishChat();};
 
-| 기능 | 키 |
-|---|---|
-| 이동 | W / A / S / D |
-| 시점 조준 | 마우스 이동 (전투 시작 시 마우스 잠금 허용) |
-| 발사/연사, 칼 공격 | 터치패드 한 손가락 탭 / 왼쪽 클릭, 클릭을 누르면 연사 |
-| 저격 스코프 | Shift 누르는 동안 (저격총을 장착한 경우) |
-| 점프 | Space |
-| 달리기 | Shift |
-| 장전 | R |
-| 주무기 / 권총 / 칼 | 1 / 2 / 3 또는 마우스 휠 |
-| 빠른 근접 공격 | V |
-| 수류탄 | G |
-| 마우스 해제/일시 조작 중지 | Esc |
-
-전투의 클릭 버튼은 마우스 잠금을 시작하기 위한 버튼입니다. 전투 조작을 활성화한 뒤에는 터치패드 탭/왼쪽 클릭으로 발사하며 누르고 있으면 연사합니다. 마우스 잠금이 차단된 환경에서는 새 탭으로 게임을 열거나 제공되는 드래그 조작 대안을 사용하세요. 터치 기기는 조이스틱/화면 드래그/발사·점프 버튼도 제공합니다.
-
-조준선은 고정 중앙 점이 아니라 총구에서 발사되는 광선이 맵/상자에 닿는 지점을 화면으로 투영한 표시입니다. 서버도 같은 총구 위치와 방향에서 명중을 판정합니다. 저격 스코프를 켜면 광학 조준축과 좁은 FOV를 사용합니다.
-
-## 전투 규칙
-
-각 플레이어는 시작 목숨 3개이며 목숨 하나의 HP는 100입니다. 사망하면 목숨을 하나 차감하고 남아 있으면 5초 후 HP 100으로 리스폰합니다. 리스폰 후 보호 시간은 3초입니다. 마지막 목숨을 잃으면 상대 승리이며 3초 후 두 명 모두 같은 방의 로비로 돌아갑니다. 이름과 주무기 선택을 유지하고 새 결투는 다시 3목숨으로 시작합니다.
-
-| 무기 | 몸통 | 헤드 | 연사 | 탄창 | 장전 |
-|---|---:|---:|---:|---:|---:|
-| AR-01 라이플 | 30 | 60 | 600 RPM | 30 | 1.8초 |
-| SR-08 저격총 | 85 | 110 | 50 RPM | 5 | 2.6초 |
-| P-09 권총 | 18 | 40 | 300 RPM | 12 | 1.2초 |
-| K-01 칼 / 빠른 근접 | 40 | 100 | 칼 90 RPM / V 0.8초 간격 | 없음 | 없음 |
-
-칼/근접 공격은 뒤치기도 100 피해입니다. 총은 서버가 머리/몸통 히트박스, 벽 가림, 총구까지의 가림, 사거리, 연사 간격, 탄약과 장전 시간을 검증합니다. 수류탄은 목숨당 2개, 지연 2.2초, 반경 4m이며 거리에 따라 최대 100에서 감소하고 맵 벽은 폭발 피해를 차단합니다.
-
-매 경기 서버가 지상 빈 공간에서 8개의 보급 상자 위치를 무작위로 고릅니다. 칼 또는 V로 부수고 나온 물품에 1.25m 이내로 다가가면 자동 획득합니다. 탄약은 현재 총의 예비탄 +30(칼을 든 경우 주무기), 약물은 남은 목숨 +1이며 HP를 회복하지 않습니다. 추가 목숨으로 3개를 넘길 수 있고 HUD에 반영됩니다. 상대도 먼저 보급품을 획득할 수 있습니다.
-
-## 로컬 실행
-
-Node.js 22:
-
-```sh
-npm ci
-npm start
-```
-
-http://localhost:3000을 두 브라우저에서 열어 같은 방 코드로 참가합니다. 다른 기기는 서버 컴퓨터의 IP:3000으로 접속합니다. 배포 시에는 Render가 제공하는 HTTPS URL을 사용합니다.
-
-## GitHub / Render
-
-저장소 최상위에 package.json, package-lock.json, server.js, game.js, physics.js, collision-world.js, world.js, map-data.js 및 public/ 전체가 있어야 합니다. node_modules는 업로드하지 않습니다. public/assets의 GLB도 포함해야 합니다.
-
-| Render 항목 | 값 |
-|---|---|
-| 서비스 | Node Web Service |
-| Branch | main |
-| Root Directory | 비워 두기 |
-| Build Command | npm ci |
-| Start Command | npm start |
-| NODE_ENV | production |
-
-PORT는 Render가 주입하고 서버는 0.0.0.0에 바인딩합니다. 서버 하나가 HTML·JS·GLB·WebSocket을 모두 제공합니다. HTTPS에서는 자동 WSS를 사용합니다. /healthz는 HTTP 상태 확인 경로이고 직접 생성한 현 서비스의 기본 헬스 체크는 TCP입니다. render.yaml은 선택적으로 새 Blueprint를 만들 때 쓰는 설정입니다.
-
-## 구현 및 검증
-
-- 서버 물리/입력 30Hz, 상태 스냅샷 15Hz. 렌더링과 별개로 입력을 전송하고, 입력 시퀀스와 서버 확인 번호로 클라이언트 이동 예측을 보정합니다.
-- 공유 캡슐 물리, 중력, 점프, 바닥/벽 접촉과 보급 상자 충돌을 사용합니다. 실제 GLB에서 생성한 간소화 충돌 모델을 BVH로 검색합니다. 맵의 시각 모델도 정적 메시를 병합해 드로콜을 줄였습니다.
-- 브라우저는 픽셀 비율 1 및 최대 30fps 렌더링을 사용합니다. 상대 위치는 보간하고 스킨 애니메이션을 재생합니다.
-- 정적 에셋은 시작 시 캐시하고 gzip 전송합니다. 맵/캐릭터에 버전 쿼리와 브라우저 캐시를 적용합니다.
-- 연결 최대 200, 방 최대 100, 메시지 4KB, 입력 제한 초당 90회, 최신 입력만 유지(300ms 무입력 시 정지), 송신 적체 64KB 제한, 25초 ping/pong 및 SIGTERM 종료를 제공합니다.
-- `npm test`는 실제 맵 물리, 무기/헤드샷, 장전, 3목숨/리스폰, 상자 보상, 두 WebSocket 입력 동기화를 검증합니다. GitHub Actions가 push/PR에서 실행합니다.
-
-무료 Render의 절전 및 콜드 스타트는 남습니다. 방 상태는 메모리에만 있어 서버 재시작 시 초기화되며 단일 인스턴스로 실행해야 합니다. 계정·영속 저장·지연 보상/과거 시점 명중 판정은 아직 없습니다. 미니맵의 상대 위치는 공개됩니다.
-
-3D 출처와 업로드 모델 정보는 CREDITS.md에 있습니다. 맵의 시각 GLB와 충돌 GLB를 바꿀 때에는 좌표·축척을 맞추고 물리 테스트도 갱신해야 합니다.
-
-## 상호작용 및 전투 연출
-
-- 모델의 앞 방향과 시야를 일치시키고 전진/후진/좌우 이동 애니메이션을 구분합니다.
-- 칼은 옆으로 휘두르는 근접 모션을 재생하며 총 발사 이벤트나 섬광, 탄흔을 만들지 않습니다.
-- 총을 벽에 맞히면 양쪽 화면에 탄흔이 남습니다. 경기당 최근 48개로 제한하고 다음 경기에서 초기화합니다.
-- 기존 두 사다리는 가까이에서 F로 잡고/놓으며 W/S로 오르내리고 Space로 뛰어내립니다. 꼭대기에서 실제 옥상으로 올라섭니다.
-- 기존 네 건물의 문은 바라보고 W로 접근하면 열립니다. 시각 모델과 충돌 모델 모두에 실제 출입구를 만들었으므로 건물 안으로 이동할 수 있습니다.
-- 장전은 총 기울이기, 탄창 분리/삽입, 장전 손잡이 동작으로 이어지며 서버의 장전 시간과 동기화합니다.
-
-## 부활 보급과 코인
-
-매 경기 각자 300코인으로 시작합니다. 코인은 로비 및 전투 화면 왼쪽 위에 표시되고, 사망 후 무료 자동 부활까지 5초 동안 아래 보급품을 각각 50코인에 구매할 수 있습니다. 즉시 부활 상품은 없습니다. 구매한 코인은 리스폰해도 차감된 상태를 유지하며 다음 경기 시작 시 300으로 초기화됩니다. 같은 보급품은 해당 부활 대기 중 한 번만 구매할 수 있습니다.
-
-| 보급품 | 다음 목숨 효과 |
-|---|---|
-| 강화탄 | 총 피해 +10% |
-| HP UP | 별도 보호막 +20. 기본 HP는 100 유지 |
-| 투시경 | 부활 후 8초간 상대를 벽 너머로 표시 |
-
-구매하지 않아도 자동 부활합니다. 부활 후 3초 동안 파란 불투명 방어막이 바깥을 감싸고 서버가 모든 피해를 차단합니다. 안쪽 면은 렌더링하지 않아 자신의 1인칭 시야는 가리지 않으며, 본인 화면에는 파란 테두리와 보호 안내가 표시됩니다. 마지막 목숨을 잃은 경우에는 구매 메뉴 없이 승패를 표시하고 로비로 이동합니다.
-
-## 공간 음향
-
-공개 라이선스의 녹음 총소리(라이플/저격총/권총), 발소리와 수류탄 취급/폭발음을 로컬 WAV로 제공합니다. 출처·저작자·라이선스·편집 내역은 로비의 사운드 출처 링크 및 public/audio/CREDITS.md에 있습니다. 칼 공격 소리는 재생하지 않습니다.
-
-서버가 실제 이동 거리와 접지 상태로 발걸음 이벤트를 생성하고, 발사/투척/폭발의 월드 좌표도 전송합니다. 브라우저의 Web Audio HRTF Panner가 사용자 눈 위치/시선에 맞춰 좌우·앞뒤 방향과 거리 감쇠를 적용하며 벽 뒤 소리는 저음 통과 필터와 감쇠를 적용합니다. PRESS START 또는 전투 시작 클릭에서 오디오를 활성화하고 로비/전투의 소리 버튼으로 끌 수 있습니다. 동시 음원은 최대 32개입니다.
-
-수류탄의 투척 속도는 18m/s이며 위쪽 힘 5m/s를 추가합니다. 조준 각도·중력·충돌·튕김을 적용하며 도화선은 2.2초입니다.
-
-## 첫 화면 / 브랜드
-
-연기 구체로 만든 시작 장면을 제거하고, 사용자가 제공한 전투 장면 레퍼런스를 바탕으로 제작한 사막 전장 배경을 사용합니다. 첫 화면과 로비 헤더는 같은 긁힌 금속/구리색 테두리의 DEATH MATCH 워드마크를 사용합니다. 시작 화면은 정적 이미지로 표시해 불필요한 3D 렌더링도 하지 않습니다.
-
-
-## AI / PVP 모드와 미니맵
-
-로비 중앙 위의 AI 훈련 / PVP 대전 버튼에서 방장이 모드를 선택합니다. 혼자 접속하면 기본 AI, 두 번째 실제 플레이어가 로비에 접속하면 자동 PVP로 바뀝니다. AI 모드는 별도 방 참가 없이 게임 시작 버튼을 누르면 자동으로 개인 방에 접속해 시작합니다. 이름이 없으면 이름 저장 직후 이어서 출격합니다. PVP는 두 플레이어 모두 준비해야 시작됩니다. AI 전투 중 친구를 초대하려면 전투 우측 상단의 로비로 버튼으로 돌아오세요.
-
-AI는 서버에서 실제 맵의 보행 가능 영역을 탐색해 순찰하고, 시야와 벽 가림을 검사해 플레이어를 발견하면 반응 지연 후 조준·점사합니다. 이동/피해/장전/탄약/부활 보호는 플레이어와 같은 규칙을 사용합니다.
-
-오른쪽 아래 미니맵 배경은 업로드된 실제 맵을 위에서 렌더링한 이미지입니다. 자신의 이동 위치와 바라보는 방향만 표시하며, 1번 플레이어는 파란 점, 2번 플레이어는 빨간 점입니다. 상대와 AI 위치는 표시하지 않습니다. 투시경 구매도 미니맵 적 표시를 켜지 않습니다.
-
-상자는 칼뿐 아니라 총알로도 파괴할 수 있습니다. 상자 HP는 55이며 총기 피해가 누적됩니다. 벽 너머 상자는 타격할 수 없고 상자가 총알을 막습니다. 파괴 후 접근하면 기존 보상인 예비탄 +30 또는 목숨 +1을 받습니다.
-
-
-## 세 슬롯 무기고 / 첨부 총기 9종
-
-로비 하단에는 주무기·보조무기·근접무기 바 세 개가 있습니다. 바를 누르면 무기 선택 창이 열리고, 실제 첨부 GLB에서 렌더링한 아이콘과 피해/연사/장탄 스탯을 보고 선택합니다. 주무기는 라이플 2종·기관단총 2종·저격총 2종, 보조무기는 권총 2종·리볼버 1종, 근접무기는 기존 전투 나이프입니다. 선택 창은 클릭·터치를 지원하고 닫기 버튼, Escape, 창 바깥 클릭으로 닫습니다.
-
-선택한 주무기와 보조무기는 독립적으로 보존되며 서버 접속·부활·로비 복귀 후에도 유지됩니다. 전투는 주무기를 들고 시작하며, 1번은 선택한 주무기, 2번은 선택한 보조무기, 3번은 칼입니다. 휠과 HUD 버튼도 이 세 슬롯 사이를 전환합니다. 두 저격총 모두 Shift를 누르는 동안 스코프를 켜며 놓으면 즉시 일반 시야로 돌아옵니다.
-
-전투 1인칭 뷰는 간단한 상자형 총 대신 첨부한 9개 GLB를 그대로 사용합니다. 모델마다 다른 크기·좌표축·총구 방향을 미터 단위의 -Z 전방으로 보정하며, 총기별 탄약·피해·장전 속도와 공간 음향을 적용합니다. 공통 탄창 교체/장전 손잡이/손 이동 모션은 모든 총에 같은 순서로 적용됩니다. 총기 카탈로그와 스탯은 weapons.js에서 관리합니다.
-
-
-## 로비 / 전투 채팅
-
-로비의 시작 버튼 위, 전투의 미니맵 위에 같은 방 채팅이 있습니다. M으로 입력창을 열고 Enter로 전송합니다. 사망 후 부활 대기 중에도 M 채팅이 가능하며 입력 중인 문장은 부활할 때 유지됩니다. 전투에서 입력 중에는 이동·발사·스코프가 멈추고, Enter 전송 또는 Escape 후 조작으로 돌아갑니다. 방 참가 전에는 메시지를 보낼 수 없습니다. AI는 채팅 응답을 하지 않습니다.
-
-채팅은 서버가 발신자 이름을 붙여 같은 방의 실제 참가자에게만 전송합니다. 최근 30개를 로비/전투 사이에 유지하며 새 참가자에게 전달합니다. 메시지는 160자 제한, 750ms 전송 간격을 적용하고 화면에는 HTML로 해석하지 않는 일반 텍스트로 표시합니다.
-
-저격총 두 종은 Shift 홀드로 조준하므로 동시에 달리지 않습니다. 다른 무기는 Shift 달리기를 유지합니다. 모바일 조준 버튼도 누르는 동안만 확대합니다.
+async function refreshRooms(){const list=$('room-list');$('rooms-status').textContent='방 목록을 불러오는 중…';try{const response=await fetch('/api/rooms',{cache:'no-store'});if(!response.ok)throw Error();const data=await response.json();list.replaceChildren();for(const room of data.rooms){const row=document.createElement('button');row.className='room-row';row.disabled=team!==null||room.count>=room.capacity||room.phase!=='lobby';const title=document.createElement('strong'),host=document.createElement('span'),status=document.createElement('span');title.textContent=room.code;host.textContent=room.host+' · '+room.mode.toUpperCase();status.textContent=room.count+'/'+room.capacity+' · '+(room.phase==='battle'?'전투 중':room.count>=2?'가득 참':'참가 가능 ↗');row.append(title,host,status);row.onclick=()=>{if(!saveRoomName())return;chosenMode='pvp';$('room').value=room.code;connectRoom(false,{joinExisting:true});};list.append(row);}$('rooms-status').textContent=data.rooms.length?'공개 방 '+data.rooms.length+'개':'열린 방이 없습니다. 새 방을 만들어 친구를 초대하세요.';}catch{$('rooms-status').textContent='방 목록을 불러오지 못했습니다. 새로고침해 주세요.';}}
+$('open-rooms').onclick=()=>{$('room-player-name').value=profileName;$('room-browser').showModal();refreshRooms();};$('close-rooms').onclick=()=>$('room-browser').close();$('refresh-rooms').onclick=refreshRooms;
+function saveRoomName(){const name=$('room-player-name').value.trim()||profileName;if(!name||Array.from(name).length>12){$('rooms-status').textContent='플레이어 이름을 1~12자로 입력하세요.';$('room-player-name').focus();return false;}profileName=name;$('player-name').value=name;$('profile-form').hidden=true;try{localStorage.setItem('vector-name',name);}catch{}return true;}
+function createPublicRoom(){if(team!==null||!saveRoomName())return;chosenMode='pvp';$('room').value=crypto.randomUUID().replaceAll('-','').slice(0,6).toUpperCase();$('room-browser').close();connectRoom(false,{createOnly:true});displayLobby();}
+$('create-room').onclick=createPublicRoom;$('browser-create').onclick=createPublicRoom;$('leave-room').onclick=()=>{socket?.close();$('chat-messages').replaceChildren();};
+setInterval(()=>{if($('room-browser').open)refreshRooms();},5000);

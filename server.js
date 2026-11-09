@@ -1,7 +1,8 @@
 import {isPrimary,isSidearm} from './weapons.js';
 import http from 'node:http';
 import {gzipSync} from 'node:zlib';
-import {readFile} from 'node:fs/promises';
+import {readFile,stat} from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
 import {WebSocketServer,WebSocket} from 'ws';
 import {initial,action,tick,cleanInput,weapons,returnToLobby,configureMode} from './game.js';
 import {setWorld} from './physics.js';
@@ -15,7 +16,30 @@ for(const sound of ['rifle','sniper','pistol','explosion','step1','step2','throw
 for(const w of Object.values(weapons))if(w.model)for(const [ext,type]of [['glb','model/gltf-binary'],['webp','image/webp']])assets['/assets/weapons/'+w.model+'.'+ext]=['public/assets/weapons/'+w.model+'.'+ext,type];
 const cachedAssets=new Map(await Promise.all(Object.entries(assets).map(async([path,[file,type]])=>[path,{body:await readFile(new URL(file,import.meta.url)),type}])));
 for(const asset of cachedAssets.values())asset.gzip=gzipSync(asset.body,{level:6});
-const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.players.length,capacity:2,phase:r.state.phase,mode:r.state.mode}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
+// Stream music on demand instead of caching or gzip-compressing full MP3 files.
+const musicTracks=new Map(await Promise.all(['main-theme-wot','lobby-theme-mw2'].map(async name=>{
+ const file=new URL(`public/audio/${name}.mp3`,import.meta.url),info=await stat(file);
+ return [`/audio/${name}.mp3`,{file,size:info.size}];
+})));
+function serveMusic(req,res,track){
+ res.setHeader('Content-Type','audio/mpeg');res.setHeader('Accept-Ranges','bytes');
+ res.setHeader('Cache-Control','public, max-age=86400');res.setHeader('X-Content-Type-Options','nosniff');
+ let start=0,end=track.size-1;
+ if(req.headers.range){
+  const match=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range.trim());
+  const invalid=()=>{res.writeHead(416,{'Content-Range':`bytes */${track.size}`,'Content-Length':0});res.end();};
+  if(!match||!match[1]&&!match[2]){invalid();return;}
+  if(!match[1]){const suffix=Number(match[2]);if(!Number.isSafeInteger(suffix)||suffix<=0){invalid();return;}start=Math.max(0,track.size-suffix);}
+  else{start=Number(match[1]);if(match[2])end=Number(match[2]);}
+  if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||start>=track.size||end<start){invalid();return;}
+  end=Math.min(end,track.size-1);res.statusCode=206;res.setHeader('Content-Range',`bytes ${start}-${end}/${track.size}`);
+ }
+ res.setHeader('Content-Length',end-start+1);
+ if(req.method==='HEAD'){res.end();return;}
+ const stream=createReadStream(track.file,{start,end});
+ stream.on('error',()=>res.destroy());res.once('close',()=>stream.destroy());stream.pipe(res);
+}
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.players.length,capacity:2,phase:r.state.phase,mode:r.state.mode}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const music=musicTracks.get(pathname);if(music){serveMusic(req,res,music);return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
 const wss=new WebSocketServer({server,maxPayload:4096});
 const rooms=new Map();
 const send=(ws,msg)=>{if(ws.readyState!==WebSocket.OPEN)return;if(ws.bufferedAmount>65536){ws.terminate();return;}ws.send(JSON.stringify(msg));};

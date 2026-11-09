@@ -18,3 +18,8 @@
 - Source: https://opengameart.org/content/synthesized-explosion
 - License: CC0 1.0, https://creativecommons.org/publicdomain/zero/1.0/
 - Changes: converted from FLAC to mono 22.05 kHz WAV with a fade-out.
+
+## Background music (user-provided recordings)
+- `main-theme-wot.mp3`: supplied as "Main Theme - WoT.mp3". Loops on the title screen and pre-lobby menus.
+- `lobby-theme-mw2.mp3`: supplied as "Call of Duty Modern Warfare 2 - Main Theme (Official OST) - Dan Allen Gaming.mp3". Loops in the room lobby.
+- Audio files are unchanged; browser playback uses reduced volume. Music stops during battles and match results.

@@ -31,10 +31,10 @@ export function moveBody(u,input={},dt=STEP){
 
 export function shotOrigin(u){const direction=look(u.yaw,u.pitch),eye=new Vector3(u.x,u.y+EYE,u.z);if((u.scoped&&isSniper(u.weapon))||u.weapon==='knife')return eye;const right=new Vector3(Math.cos(u.yaw),0,-Math.sin(u.yaw)),up=new Vector3().crossVectors(right,direction).normalize();const profile=aimProfiles[u.weapon];if(u.scoped&&profile)return eye.addScaledVector(direction,profile.rear+profile.eye).addScaledVector(up,-profile.height);const scale=isSidearm(u.weapon)?.7:1;return eye.addScaledVector(right,.25*scale).addScaledVector(up,-.25*scale).addScaledVector(direction,isSniper(u.weapon)?1.18:isSidearm(u.weapon)?.65:.93);}
 
-// Aimed shots leave the real barrel and converge on the point seen through the sight.
+// Firearm shots leave the barrel and converge on the fixed, camera-centred aim point.
 export function shotDirection(u,targets=[]){
- const direction=look(u.yaw,u.pitch);if(!u.scoped||!aimProfiles[u.weapon])return direction;
- const eye=new Vector3(u.x,u.y+EYE,u.z),ray=new Ray(eye,direction);let distance=Math.min(weapons[u.weapon].range,raycastWorld(ray)?.distance??Infinity);
+ const direction=look(u.yaw,u.pitch),weapon=weapons[u.weapon];if(!weapon||weapon.mag===null)return direction;
+ const eye=new Vector3(u.x,u.y+EYE,u.z),ray=new Ray(eye,direction);let distance=Math.min(weapon.range,raycastWorld(ray)?.distance??Infinity);
  for(const c of crates){if(c.broken)continue;const p=ray.intersectBox(new Box3(new Vector3(c.x-.4,c.y,c.z-.4),new Vector3(c.x+.4,c.y+.75,c.z+.4)),new Vector3());if(p)distance=Math.min(distance,eye.distanceTo(p));}
  for(const target of targets){if(target.id===u.id||target.hp<=0)continue;for(const [height,radius]of [[.7,.34],[1.1,.34],[1.5,.25]]){const p=ray.intersectSphere(new Sphere(new Vector3(target.x,target.y+height,target.z),radius),new Vector3());if(p)distance=Math.min(distance,eye.distanceTo(p));}}
  return eye.addScaledVector(direction,Math.max(.05,distance)).sub(shotOrigin(u)).normalize();

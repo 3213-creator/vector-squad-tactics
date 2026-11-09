@@ -13,3 +13,20 @@ Gunfire: Vincent Sevedge / Tabasco, Gunshot Sounds, Creative Commons Attribution
 ## Title art and branding
 
 The desert combat title background and metallic DEATH MATCH wordmark were generated from the visual references supplied by the user, then encoded as WebP for delivery. The original generated PNGs are retained separately in the working environment.
+
+
+## User-supplied firearm models
+
+The following nine GLB files are used for the actual first-person weapons. Their transparent WebP armory icons were rendered from these same models. Author names are taken from the uploaded filenames; no additional license terms were supplied or inferred.
+
+| Game key | Uploaded asset | Credited author |
+|---|---|---|
+| rifle | Assault Rifle / Bgvuu4CUMV | Quaternius |
+| rifle_z | Assault Rifle / XGeBGFQxYg | Zsky |
+| smg_z | Submachine Gun / e66LWULNG4 | Zsky |
+| smg_q | Submachine Gun / 7ehatxr7FY | Quaternius |
+| sniper | Sniper Rifle / vGAzj2Of5M | J-Toastie |
+| awp | AWP Sniper / fKsTWWhSkqt | Kyler Swanson |
+| pistol | Pistol / J3i9KDQ3kt | Quaternius |
+| pistol_z | Pistol / 3To2e7sKmO | Zsky |
+| revolver | Revolver / 9C26wSpMS0 | Quaternius |

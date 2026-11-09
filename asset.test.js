@@ -12,3 +12,8 @@ test('supplied GLB map and both character models parse and clone without externa
  if(name==='swat')assert.ok(gltf.animations.some(a=>/Idle_Neutral/.test(a.name)));
  }
 });
+
+test('all nine uploaded guns parse and normalize to a forward-facing first-person muzzle',async()=>{
+ const {weapons,isSidearm,isSniper}=await import('./weapons.js');const {createWeaponModel}=await import('./public/weapon-model.js');const guns=Object.entries(weapons).filter(([,w])=>w.model);assert.equal(guns.length,9);
+ for(const [key,w]of guns){const bytes=await readFile(new URL(`public/assets/weapons/${w.model}.glb`,import.meta.url)),gltf=await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),'');const before=new THREE.Box3().setFromObject(gltf.scene),model=createWeaponModel(gltf.scene,key),bounds=new THREE.Box3().setFromObject(model),length=isSniper(key)?1.2:isSidearm(key)?.42:w.category==='smg'?.72:.95;assert.ok(Math.abs(bounds.min.z)<.001,key+' muzzle');assert.ok(Math.abs(bounds.max.z-length)<.001,key+' length');assert.ok(bounds.getSize(new THREE.Vector3()).y>0);assert.ok(new THREE.Box3().setFromObject(gltf.scene).equals(before),key+' preserves source');const icon=await readFile(new URL(`public/assets/weapons/${w.model}.webp`,import.meta.url));assert.equal(icon.toString('ascii',8,12),'WEBP');}
+});

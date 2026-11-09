@@ -1,3 +1,4 @@
+import {isSniper,isSidearm} from './weapons.js';
 import {ladders,nearLadder,toggleLadder} from './environment.js';
 import {Vector3,Ray,Box3} from 'three';
 import {Capsule} from 'three/addons/math/Capsule.js';
@@ -28,4 +29,4 @@ export function moveBody(u,input={},dt=STEP){
  u.x=Math.max(-12,Math.min(12,capsule.start.x));u.y=capsule.start.y-RADIUS;u.z=Math.max(-8,Math.min(8,capsule.start.z));
 }
 
-export function shotOrigin(u){const direction=look(u.yaw,u.pitch),eye=new Vector3(u.x,u.y+EYE,u.z);if((u.scoped&&u.weapon==='sniper')||u.weapon==='knife')return eye;const right=new Vector3(Math.cos(u.yaw),0,-Math.sin(u.yaw)),up=new Vector3().crossVectors(right,direction).normalize();const scale=u.weapon==='pistol'?.7:1;return eye.addScaledVector(right,.25*scale).addScaledVector(up,-.25*scale).addScaledVector(direction,u.weapon==='sniper'?1.18:u.weapon==='pistol'?.65:.93);}
+export function shotOrigin(u){const direction=look(u.yaw,u.pitch),eye=new Vector3(u.x,u.y+EYE,u.z);if((u.scoped&&isSniper(u.weapon))||u.weapon==='knife')return eye;const right=new Vector3(Math.cos(u.yaw),0,-Math.sin(u.yaw)),up=new Vector3().crossVectors(right,direction).normalize();const scale=isSidearm(u.weapon)?.7:1;return eye.addScaledVector(right,.25*scale).addScaledVector(up,-.25*scale).addScaledVector(direction,isSniper(u.weapon)?1.18:isSidearm(u.weapon)?.65:.93);}

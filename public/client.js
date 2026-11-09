@@ -191,7 +191,7 @@ function renderMatchPreparation(time){
   renderer.render(scene,flyoverCamera);return;
  }
  overlay.dataset.stage='countdown';$('intro-number').hidden=false;$('intro-progress').hidden=true;
- const beat=String(clamp(Math.ceil((state.battleStartsAt-remoteNow())/1000),1,3));
+ const remaining=clamp(Math.ceil((state.battleStartsAt-remoteNow())/1000),1,3),previous=Number(lastCountdownBeat),beat=String(previous>=1&&previous<=3?Math.min(previous,remaining):remaining);
  setHUDText('intro-title','전투 시작 준비');setHUDText('intro-number',beat);setHUDText('intro-caption','시작 신호를 기다리세요.');
  if(lastCountdownBeat!==beat){lastCountdownBeat=beat;spatialAudio.playCountdownImpact();}
  camera.position.set(u.x,u.y+EYE,u.z);camera.rotation.set(u.pitch,u.yaw,0,'YXZ');if(camera.fov!==80){camera.fov=80;camera.updateProjectionMatrix();}

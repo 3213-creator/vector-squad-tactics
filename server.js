@@ -23,7 +23,7 @@ function broadcast(room){for(const ws of room.players)send(ws,{type:'state',stat
 wss.on('connection',ws=>{
  if(wss.clients.size>200){ws.close(1013,'Server full');return;}
  ws.isAlive=true;ws.on('pong',()=>{ws.isAlive=true;});
- let room,team,windowAt=Date.now(),messages=0,lastSequence=-1;
+ let room,team,windowAt=Date.now(),messages=0,lastChatAt=0,lastSequence=-1;
  const joinTimer=setTimeout(()=>{if(!room)ws.close(1008,'Join timeout');},30000);
  ws.on('message',raw=>{try{
  if(Date.now()-windowAt>1000){windowAt=Date.now();messages=0;}if(++messages>90){ws.close(1008,'Input rate exceeded');return;}
@@ -32,14 +32,15 @@ wss.on('connection',ws=>{
  if(!room){
  if(a.type!=='join'||typeof a.room!=='string'||! /^[A-Za-z0-9_-]{1,24}$/.test(a.room))throw Error('방 코드는 영문·숫자 1~24자로 입력하세요.');
  if(a.name!==undefined&&(typeof a.name!=='string'||!a.name.trim()||Array.from(a.name.trim()).length>12||/[\u0000-\u001f\u007f]/.test(a.name)))throw Error('이름은 1~12자로 입력하세요.');
- if(!rooms.has(a.room)){if(rooms.size>=100)throw Error('서버 방이 가득 찼습니다.');rooms.set(a.room,{state:initial(),brain:createBrain(),players:[],inputs:[null,null],inputAt:[0,0],jumpPending:[false,false],interactPending:[false,false],firePending:[false,false],code:a.room});}
+ if(!rooms.has(a.room)){if(rooms.size>=100)throw Error('서버 방이 가득 찼습니다.');rooms.set(a.room,{state:initial(),brain:createBrain(),players:[],inputs:[null,null],inputAt:[0,0],jumpPending:[false,false],interactPending:[false,false],firePending:[false,false],chat:[],code:a.room});}
  const candidate=rooms.get(a.room);
  if(candidate.players.length>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('AI 대전이 진행 중입니다. 방장이 로비로 돌아온 뒤 참가해 주세요.');
- room=candidate;clearTimeout(joinTimer);team=room.players.length;room.players.push(ws);room.state.players[team]={name:a.name?.trim()||`오퍼레이터 ${team+1}`,ready:false};configureMode(room.state,room.players.length===2?'pvp':a.mode==='pvp'?'pvp':'ai');if(Object.hasOwn(weapons,a.weapon)){room.state.units[team].weapon=a.weapon;if(isPrimary(a.weapon))room.state.units[team].primary=a.weapon;if(isSidearm(a.weapon))room.state.units[team].secondary=a.weapon;}if(isPrimary(a.primary))room.state.units[team].primary=a.primary;if(isSidearm(a.secondary))room.state.units[team].secondary=a.secondary;send(ws,{type:'joined',team});broadcast(room);return;
+ room=candidate;clearTimeout(joinTimer);team=room.players.length;room.players.push(ws);room.state.players[team]={name:a.name?.trim()||`오퍼레이터 ${team+1}`,ready:false};configureMode(room.state,room.players.length===2?'pvp':a.mode==='pvp'?'pvp':'ai');if(Object.hasOwn(weapons,a.weapon)){room.state.units[team].weapon=a.weapon;if(isPrimary(a.weapon))room.state.units[team].primary=a.weapon;if(isSidearm(a.weapon))room.state.units[team].secondary=a.weapon;}if(isPrimary(a.primary))room.state.units[team].primary=a.primary;if(isSidearm(a.secondary))room.state.units[team].secondary=a.secondary;send(ws,{type:'joined',team});if(room.chat.length)send(ws,{type:'chatHistory',messages:room.chat});broadcast(room);return;
  }
  if(a.type==='input'){
  if(room.state.phase!=='battle'||room.state.winner!==null)return;const input=cleanInput(a);if(input.seq<=lastSequence)return;lastSequence=input.seq;if(input.fire&&!room.inputs[team]?.fire)room.firePending[team]=true;room.inputs[team]=input;room.inputAt[team]=Date.now();if(input.jump)room.jumpPending[team]=true;if(input.interact)room.interactPending[team]=true;return;
  }
+ if(a.type==='chat'){const now=Date.now();if(typeof a.text!=='string'||!a.text.trim()||Array.from(a.text.trim()).length>160||/[\u0000-\u001f\u007f]/.test(a.text))throw Error('채팅은 1~160자로 입력하세요.');if(now-lastChatAt<750)throw Error('잠시 후 메시지를 보내세요.');lastChatAt=now;const message={team,name:room.state.players[team].name,text:a.text.trim(),at:now};room.chat.push(message);if(room.chat.length>30)room.chat.shift();for(const other of room.players)send(other,{type:'chat',message});return;}
  if(a.type==='mode'){if(team!==0)throw Error('방장만 모드를 변경할 수 있습니다.');configureMode(room.state,a.mode);room.brain=createBrain();broadcast(room);return;}
  if(a.type==='leaveMatch'){if(room.state.phase==='battle'){clearTimeout(room.resetTimer);room.state=returnToLobby(room.state);room.brain=createBrain();room.resetTimer=null;room.inputs=[null,null];room.inputAt=[0,0];room.jumpPending=[false,false];room.interactPending=[false,false];room.firePending=[false,false];broadcast(room);}return;}
  action(room.state,team,a);broadcast(room);

@@ -10,6 +10,7 @@ test('two real-time sockets share names, ready state, continuous movement, fire,
  for(let seq=1;seq<=15;seq++){a.send(JSON.stringify({type:'input',seq,forward:1,strafe:0,yaw:-Math.PI/2,pitch:0,fire:seq<5}));await new Promise(r=>setTimeout(r,35));}
  const moved=await a.state(s=>s.units[0].ack>=15);assert.ok(moved.units[0].x>-6.5);assert.ok(moved.units[0].ammo.rifle<30);assert.equal(moved.units[0].lives,3);assert.equal(moved.units[0].hp,100);assert.equal(moved.crates.length,8);
  b.send(JSON.stringify({type:'equip',weapon:'sniper'}));const swapped=await a.state(s=>s.units[1].weapon==='sniper');assert.equal(swapped.units[1].primary,'sniper');a.send(JSON.stringify({type:'reload'}));await a.state(s=>s.units[0].reloadUntil>0);const loaded=await a.state(s=>s.units[0].reloadUntil===0&&s.units[0].ammo.rifle===30);assert.ok(loaded.units[0].reserve.rifle<90);
+ a.send(JSON.stringify({type:'input',seq:16,yaw:-Math.PI/2,pitch:0,fire:true}));a.send(JSON.stringify({type:'input',seq:17,yaw:-Math.PI/2,pitch:0,fire:false}));await a.state(s=>s.units[0].ack>=17&&s.units[0].ammo.rifle===29);
  a.close();for(;;){const m=await b.next();if(m.type==='closed')break;}
  }finally{clients.forEach(c=>c.terminate());server.kill();}
 });

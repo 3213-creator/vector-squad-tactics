@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "three": "0.170.0",
+    "three-mesh-bvh": "0.8.3",
     "ws": "8.22.2"
   },
   "engines": {

@@ -1,36 +1,15 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {WebSocket} from 'ws';
-import {walls,SIZE,DEPTH} from './game.js';
-
-test('two sockets join, synchronize moves and reject out-of-turn commands',{timeout:25000},async()=>{
- const server=spawn(process.execPath,['server.js'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:'3199'},stdio:['ignore','pipe','pipe']});
- const clients=[];
- try{
- await Promise.race([once(server.stdout,'data'),new Promise((_,reject)=>setTimeout(()=>reject(Error('server startup timeout')),5000))]);
- function connect(){const ws=new WebSocket('ws://127.0.0.1:3199');clients.push(ws);const queue=[],waiters=[];ws.on('message',raw=>{const m=JSON.parse(raw);const w=waiters.shift();if(w)w(m);else queue.push(m);});ws.next=()=>queue.length?Promise.resolve(queue.shift()):new Promise(resolve=>waiters.push(resolve));return ws;}
- const health=await fetch('http://127.0.0.1:3199/healthz');assert.equal(health.status,200);assert.deepEqual(await health.json(),{status:'ok'});
- for(const path of ['/','/style.css','/client.js','/game.js','/map-data.js','/three.js','/addons/loaders/GLTFLoader.js','/addons/utils/BufferGeometryUtils.js','/addons/utils/SkeletonUtils.js'])assert.equal((await fetch('http://127.0.0.1:3199'+path)).status,200);
- const a=connect(),b=connect();await Promise.all([once(a,'open'),once(b,'open')]);
- a.send(JSON.stringify({type:'join',room:'TEST',name:'ALPHA'}));assert.equal((await a.next()).team,0);assert.equal((await a.next()).ready,false);
- b.send(JSON.stringify({type:'join',room:'TEST'}));assert.equal((await b.next()).team,1);assert.equal((await b.next()).ready,true);await a.next();
- await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'ready'}));assert.equal((await a.next()).state.phase,'lobby');await b.next();
- await new Promise(resolve=>setTimeout(resolve,60));b.send(JSON.stringify({type:'ready'}));assert.equal((await b.next()).state.phase,'battle');await a.next();
- await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'move',id:0,x:1,z:8}));
- const sa=await a.next(),sb=await b.next();assert.deepEqual(sa,sb);assert.equal(sa.state.units[0].x,1);assert.equal(sa.state.units.length,2);
- await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'equip',id:0,weapon:'pistol'}));assert.equal((await a.next()).state.units[0].weapon,'pistol');assert.equal((await b.next()).state.units[0].weapon,'pistol');
- b.send(JSON.stringify({type:'end'}));assert.equal((await b.next()).type,'error');
- await new Promise(resolve=>setTimeout(resolve,60));a.send(JSON.stringify({type:'end'}));let current=(await a.next()).state;assert.equal(current.turn,1);assert.equal((await b.next()).state.turn,1);
- async function command(team,action){await new Promise(r=>setTimeout(r,65));clients[team].send(JSON.stringify(action));const response=await clients[team].next();assert.equal(response.type,'state',response.message);assert.deepEqual(await clients[1-team].next(),response);current=response.state;}
- async function turn(){if(current.turn===1)await command(1,{type:'end'});if(current.units[0].ap===0){await command(0,{type:'end'});await command(1,{type:'end'});}}
- const blocked=new Set(walls.map(w=>`${w.x},${w.z}`)),target=current.units[1],q=[{...current.units[0],path:[]}],seen=new Set();let path;
- for(let i=0;i<q.length;i++){const node=q[i],key=`${node.x},${node.z}`;if(seen.has(key))continue;seen.add(key);if(Math.abs(node.x-target.x)+Math.abs(node.z-target.z)===1){path=node.path;break;}for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]){const x=node.x+dx,z=node.z+dz;if(x>=0&&z>=0&&x<SIZE&&z<DEPTH&&!blocked.has(`${x},${z}`)&&!seen.has(`${x},${z}`)&&!(x===target.x&&z===target.z))q.push({x,z,path:[...node.path,{x,z}]});}}
- assert.ok(path);for(const step of path){await turn();await command(0,{type:'move',id:0,...step});}
- await turn();await command(0,{type:'equip',id:0,weapon:'rifle'});while(current.winner===null){await turn();await new Promise(r=>setTimeout(r,110));await command(0,{type:'attack',id:0,target:1});}
- assert.equal(current.winner,0);const reset=await a.next();assert.deepEqual(await b.next(),reset);assert.equal(reset.state.phase,'lobby');assert.equal(reset.state.players[0].name,'ALPHA');assert.equal(reset.state.players[0].ready,false);assert.equal(reset.state.units[1].hp,100);
-
- a.close();assert.equal((await b.next()).type,'closed');
+import test from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';import {once} from 'node:events';import {WebSocket} from 'ws';
+test('two real-time sockets share names, ready state, continuous movement, fire, reload and weapon swap',{timeout:15000},async()=>{
+ const server=spawn(process.execPath,['server.js'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:'3299'},stdio:['ignore','pipe','pipe']});const clients=[];
+ try{await Promise.race([once(server.stdout,'data'),new Promise((_,reject)=>setTimeout(()=>reject(Error('startup timeout')),5000))]);
+ const health=await fetch('http://127.0.0.1:3299/healthz');assert.equal(health.status,200);
+ for(const path of ['/','/client.js','/physics.js','/collision-world.js','/bvh.js','/addons/math/Capsule.js'])assert.equal((await fetch('http://127.0.0.1:3299'+path)).status,200);
+ function connect(){const ws=new WebSocket('ws://127.0.0.1:3299');clients.push(ws);const queue=[],waiters=[];ws.on('message',r=>{const m=JSON.parse(r);if(waiters.length)waiters.shift()(m);else queue.push(m);});ws.next=()=>queue.length?Promise.resolve(queue.shift()):new Promise(r=>waiters.push(r));ws.state=async predicate=>{for(;;){const m=await ws.next();assert.notEqual(m.type,'error',m.message);if(m.type==='state'&&predicate(m.state))return m.state;}};return ws;}
+ const a=connect(),b=connect();await Promise.all([once(a,'open'),once(b,'open')]);a.send(JSON.stringify({type:'join',room:'NET',name:'Alpha'}));assert.equal((await a.next()).team,0);await a.next();b.send(JSON.stringify({type:'join',room:'NET',name:'Bravo'}));assert.equal((await b.next()).team,1);assert.equal((await b.next()).state.players[0].name,'Alpha');
+ a.send(JSON.stringify({type:'ready'}));b.send(JSON.stringify({type:'ready'}));await a.state(s=>s.phase==='battle');await b.state(s=>s.phase==='battle');
+ for(let seq=1;seq<=15;seq++){a.send(JSON.stringify({type:'input',seq,forward:1,strafe:0,yaw:-Math.PI/2,pitch:0,fire:seq<5}));await new Promise(r=>setTimeout(r,35));}
+ const moved=await a.state(s=>s.units[0].ack>=15);assert.ok(moved.units[0].x>-6.5);assert.ok(moved.units[0].ammo.rifle<30);assert.equal(moved.units[0].lives,3);assert.equal(moved.units[0].hp,100);assert.equal(moved.crates.length,8);
+ b.send(JSON.stringify({type:'equip',weapon:'sniper'}));const swapped=await a.state(s=>s.units[1].weapon==='sniper');assert.equal(swapped.units[1].primary,'sniper');a.send(JSON.stringify({type:'reload'}));await a.state(s=>s.units[0].reloadUntil>0);const loaded=await a.state(s=>s.units[0].reloadUntil===0&&s.units[0].ammo.rifle===30);assert.ok(loaded.units[0].reserve.rifle<90);
+ a.close();for(;;){const m=await b.next();if(m.type==='closed')break;}
  }finally{clients.forEach(c=>c.terminate());server.kill();}
 });

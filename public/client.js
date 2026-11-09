@@ -133,3 +133,5 @@ function saveRoomName(){const name=$('room-player-name').value.trim()||profileNa
 function createPublicRoom(){if(team!==null||!saveRoomName())return;chosenMode='pvp';$('room').value=crypto.randomUUID().replaceAll('-','').slice(0,6).toUpperCase();$('room-browser').close();connectRoom(false,{createOnly:true});displayLobby();}
 $('create-room').onclick=createPublicRoom;$('browser-create').onclick=createPublicRoom;$('leave-room').onclick=()=>{socket?.close();$('chat-messages').replaceChildren();};
 setInterval(()=>{if($('room-browser').open)refreshRooms();},5000);
+
+$('code-join').onsubmit=e=>{e.preventDefault();if(team!==null){$('rooms-status').textContent='현재 방을 나간 뒤 참가해 주세요.';return;}if(!saveRoomName())return;chosenMode='pvp';$('room').value=$('private-room-code').value.trim();connectRoom(false,{joinExisting:true});};

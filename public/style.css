@@ -102,3 +102,9 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 #duel-mode-options button{min-height:44px}
 @media(min-width:601px) and (max-width:850px){.mode-selector{max-width:calc(100% - 340px)}#mode-formats button{font-size:10px;padding:9px 4px}}
 @media(max-width:600px){.mode-selector{width:auto;max-width:calc(100% - 40px)}#mode-formats button{font-size:11px}}
+
+#connection-overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:#08121bd9;backdrop-filter:blur(3px);text-align:center}
+#connection-overlay>div{width:min(430px,100%);padding:30px 24px;background:#12232bf2;border:1px solid #657e88;box-shadow:0 16px 70px #0008}
+#connection-overlay h2{margin:0;color:#e4efcc;font-size:25px}#connection-overlay p{color:#bcd0d8;font-size:13px;margin:18px 0 24px}#connection-exit{min-height:44px;background:#263e49;color:#e4ece4;border:1px solid #7c9298}
+#peer-connection-notice{position:fixed;z-index:9;top:90px;left:50%;transform:translateX(-50%);width:max-content;max-width:90vw;padding:10px 15px;background:#16252ce8;border:1px solid #bb9e64;color:#ffe0a2;font-size:12px;text-align:center;pointer-events:none}
+@media(max-width:600px){#peer-connection-notice{top:70px;font-size:10px}}

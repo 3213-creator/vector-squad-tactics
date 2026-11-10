@@ -16,6 +16,8 @@ function setHUDText(id,value){const el=$(id),text=String(value);if(el.textConten
 let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
 let screen='title',connecting=false,connectionNotice='',roomsRequest=0,serverClockOffset=0,resultReturnPending=false;
 let duelModesOpen=false;
+const network={ready:false,intentional:false,reconnecting:false,failed:false,restorePending:false,session:null,retryTimer:0,attemptTimer:0,startedAt:0,attempts:0,lastMessageAt:0,peerOffline:false};
+let lastInputSentAt=-Infinity,fireQueued=false;
 let battleMenuOpen=false,menuOpenedAt=0,deliberatePointerUnlock=false,pointerWasLocked=false;
 function remoteNow(){return Date.now()+serverClockOffset;}
 // Menu/lobby themes loop; the ten-second battle intro and final result themes play once.
@@ -119,30 +121,126 @@ function displayLobby(){
  const me=team===null?null:state.players[team],other=team===null?null:state.players[1-team];$('lobby-coins').textContent=`◉ ${team===null?300:state.units[team].coins}`;$('display-name').textContent=me?.name||profileName||'이름을 설정하세요';$('own-label').textContent=me?.name||profileName||'나의 오퍼레이터';$('own-ready').textContent=me?.ready?'READY / 준비 완료':me?'대기 중':'접속 전';$('opponent-label').hidden=!other;$('enemy-name').textContent=other?.name||'';$('enemy-ready').textContent=other?.ready?'READY / 준비 완료':'입장 · 준비 중';$('lobby').classList.toggle('has-opponent',!!other);
  const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;renderModeSelector(mode,humans,me,waitingForResult);$('launch-help').textContent=waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
  $('lobby-status').textContent=waitingForResult?'상대가 전투 결과를 확인하고 있습니다. 잠시 기다려 주세요.':!assetsReady?'맵과 캐릭터를 불러오는 중입니다.':startPending?'AI 전투에 접속하는 중입니다…':!me?(mode==='ai'?'게임 시작을 누르면 AI 훈련에 바로 접속합니다.':'이름을 저장한 뒤 같은 방으로 접속하세요.'):!other?'상대 접속을 기다리는 중입니다.':other.isBot?'AI 준비 완료 · 게임 시작을 눌러 주세요.':me.ready?'상대의 준비를 기다리는 중입니다.':`${other.name} 님이 입장했습니다. 시작을 눌러 주세요.`;
- $('start-game').disabled=waitingForResult||!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${waitingForResult?'상대 확인 대기':startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').disabled=connecting;
+ $('start-game').disabled=connecting||network.peerOffline||waitingForResult||!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${waitingForResult?'상대 확인 대기':startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').disabled=connecting;
  if(waitingForResult){$('own-ready').textContent='로비 대기 중';$('enemy-ready').textContent='전투 결과 확인 중';}$('edit-name').disabled=waitingForResult;
  renderLoadout();rebuildLobby();
  if(screen!=='lobby'&&$('weapon-picker').open)$('weapon-picker').close();if(battle&&!inBattle)startBattle();if(!battle&&inBattle)leaveBattle();if(screen==='results'){updateMatchResults();if(previousScreen!=='results')requestAnimationFrame(()=>{if(screen==='results')$('result-confirm').focus({preventScroll:true});});}syncRenderLoop();
 }
-function send(a){if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(a));}
+function send(a){
+ if(socket?.readyState!==WebSocket.OPEN||!network.ready&&!['join','resume','ping'].includes(a.type)||socket.bufferedAmount>65536)return false;
+ try{socket.send(JSON.stringify(a));return true;}catch{return false;}
+}
+function saveConnectionSession(){try{if(network.session)sessionStorage.setItem('death-match-session',JSON.stringify(network.session));else sessionStorage.removeItem('death-match-session');}catch{}}
+function clearConnectionTimers(){clearTimeout(network.retryTimer);clearTimeout(network.attemptTimer);network.retryTimer=network.attemptTimer=0;}
+function stopLocalControls(){
+ if(dragAim&&renderer.domElement.hasPointerCapture?.(dragAim.id))renderer.domElement.releasePointerCapture(dragAim.id);
+ keys.clear();fire=fireQueued=false;scoped=touchScope=false;sprintRequested=false;jump=interact=false;dragAim=null;touch.forward=touch.strafe=0;pending=[];
+ if(team!==null&&state.players[team])predicted={...state.units[team]};
+}
+function showConnectionOverlay(title,message){
+ const wasHidden=$('connection-overlay').hidden;$('connection-overlay').hidden=false;setHUDText('connection-title',title);setHUDText('connection-detail',message);
+ if(wasHidden){document.activeElement?.blur?.();$('connection-overlay').focus({preventScroll:true});}
+ if(document.pointerLockElement){deliberatePointerUnlock=true;document.exitPointerLock?.();}
+}
+function updatePeerConnection(){
+ const disconnected=network.ready&&team!==null&&state.players[1-team]&&!state.players[1-team].isBot&&network.peerOffline;
+ $('peer-connection-notice').hidden=!disconnected||!['lobby','battle'].includes(screen);
+}
+function beginReconnect(){
+ if(network.intentional||network.failed||!network.session)return;
+ if(!network.reconnecting){network.startedAt=Date.now();network.attempts=0;}
+ network.reconnecting=true;network.ready=false;connecting=true;stopLocalControls();
+ $('connection').textContent='● RECONNECTING';showConnectionOverlay('연결 복구 중','전투와 방을 유지한 채 다시 연결하고 있습니다.');updatePeerConnection();
+}
+function failReconnect(message){
+ clearConnectionTimers();network.ready=false;network.reconnecting=false;network.failed=true;network.intentional=true;network.session=null;saveConnectionSession();connecting=false;startPending=false;stopLocalControls();
+ const previous=socket;socket=null;previous?.close();
+ $('connection').textContent='● OFFLINE';showConnectionOverlay('연결이 종료되었습니다',message);updatePeerConnection();
+}
+function scheduleReconnect(){
+ beginReconnect();if(!network.reconnecting)return;
+ if(Date.now()-network.startedAt>=65000){failReconnect('재연결 대기 시간이 끝났습니다. 방 메뉴에서 다시 참가해 주세요.');return;}
+ clearTimeout(network.retryTimer);
+ network.retryTimer=setTimeout(()=>{if(network.reconnecting&&!network.failed)openGameSocket({type:'resume',...network.session});},Math.min(4000,500*2**Math.min(network.attempts,3)));
+}
+function retryConnectionNow(){
+ if(network.intentional||network.failed||!network.session||!assetsReady)return;
+ beginReconnect();clearConnectionTimers();const previous=socket;socket=null;previous?.close();scheduleReconnect();
+}
+function restoreSessionAfterReload(){
+ try{
+  // A duplicated/new tab starts a fresh player; only a reload of this tab resumes its session.
+  if(performance.getEntriesByType('navigation')[0]?.type!=='reload')return;
+  const saved=JSON.parse(sessionStorage.getItem('death-match-session')||'null');
+  if(!saved||! /^[A-Za-z0-9_-]{32}$/.test(saved.token)||! /^[A-Za-z0-9_-]{1,24}$/.test(saved.room))return;
+  network.session=saved;network.reconnecting=true;network.restorePending=true;connecting=true;
+  showConnectionOverlay('전투 불러오는 중','이전 방과 플레이어 정보를 복구하고 있습니다.');
+ }catch{}
+}
+function leaveRoomConnection(){
+ if(team!==null&&state.players[team]){chosen=state.units[team].primary;chosenSecondary=state.units[team].secondary;}
+ if(network.ready)send({type:'leaveRoom'});
+ network.intentional=true;network.ready=false;network.reconnecting=false;network.failed=false;network.session=null;network.peerOffline=false;network.restorePending=false;clearConnectionTimers();saveConnectionSession();
+ const previous=socket;socket=null;previous?.close();connecting=false;startPending=false;connectionNotice='';team=null;state=initial();pending=[];resultReturnPending=false;lobbyRotationOffsets.clear();lobbyRevision='';
+ $('connection-overlay').hidden=true;$('peer-connection-notice').hidden=true;$('profile-form').hidden=true;$('chat-messages').replaceChildren();$('connection').textContent='● OFFLINE';screen='menu';displayLobby();setNavigationStatus('');
+}
+$('connection-exit').onclick=leaveRoomConnection;
+function openGameSocket(request){
+ clearTimeout(network.attemptTimer);network.lastMessageAt=Date.now();
+ socket=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}`);const current=socket;
+ if(request.type==='resume'){network.attempts++;setHUDText('connection-detail',`같은 방으로 재연결 중 · ${network.attempts}회 시도`);}
+ network.attemptTimer=setTimeout(()=>{if(current===socket&&!network.ready){socket=null;current.close();if(network.session)scheduleReconnect();else{connecting=false;startPending=false;displayLobby();setNavigationStatus('서버 연결 시간이 초과되었습니다. 다시 참가해 주세요.');}}},request.type==='resume'?10000:30000);
+ current.onopen=()=>{if(current===socket)send(request);};
+ let resumed=false;
+ current.onmessage=e=>{
+  if(current!==socket)return;let m;try{m=JSON.parse(e.data);}catch{return;}network.lastMessageAt=Date.now();
+  if(m.type==='chatHistory'){$('chat-messages').replaceChildren();for(const message of m.messages)addChat(message);}
+  if(m.type==='chat')addChat(m.message);
+  if(m.type==='joined'){
+   resumed=!!m.resumed;if(!resumed){$('chat-messages').replaceChildren();$('chat-input').value='';}
+   team=m.team;seq=Math.max(seq,Number(m.inputSequence)||0);$('room').value=m.room||request.room;
+   network.session={token:m.sessionToken,room:m.room||request.room};saveConnectionSession();
+  }
+  if(m.type==='state'){
+   const wasReconnecting=network.reconnecting;
+   if(Number.isFinite(m.serverTime))serverClockOffset=m.serverTime-Date.now();
+   if(resumed){pending=[];lastEvent=m.state.clock;seq=Math.max(seq,m.state.units[team]?.ack||0);}
+   network.ready=true;network.reconnecting=false;network.failed=false;connecting=false;clearConnectionTimers();$('connection-overlay').hidden=true;$('connection').textContent='● ONLINE';
+   const other=m.state.players[1-team];network.peerOffline=!!other&&!other.isBot&&Array.isArray(m.connected)&&m.connected[1-team]===false;
+   receive(m.state);
+   if(wasReconnecting&&inBattle&&state.phase==='battle'){
+    stopLocalControls();const own=state.units[team];yaw=own.yaw;pitch=own.pitch;crouchRequested=!!own.crouching;lastInputSentAt=-Infinity;
+    if(!battleMenuOpen){touch.active=matchMedia('(pointer:coarse)').matches;dragMode=!touch.active;$('capture-overlay').hidden=true;}
+   }
+   resumed=false;updatePeerConnection();
+   if(startPending){startPending=false;if(m.state.mode==='ai'&&m.state.phase==='lobby'&&m.state.players[1]?.isBot)send({type:'ready'});displayLobby();}
+  }
+  if(m.type==='error'){
+   connectionNotice=m.message;setNavigationStatus(m.message);$('lobby-status').textContent=m.message;$('shop-status').textContent=m.message;$('chat-status').textContent=m.message;
+   if(team===null){startPending=false;current.close();}
+  }
+  if(m.type==='resumeRejected'){failReconnect(m.message);current.close();}
+  if(m.type==='closed'){
+   if(m.code==='server_restart'&&network.session){beginReconnect();current.close();}
+   else{failReconnect(m.message);current.close();}
+  }
+ };
+ current.onclose=()=>{
+  if(current!==socket)return;clearTimeout(network.attemptTimer);network.ready=false;
+  if(network.intentional||network.failed)return;
+  if(network.session){scheduleReconnect();return;}
+  connecting=false;startPending=false;$('connection').textContent='● OFFLINE';displayLobby();setNavigationStatus(connectionNotice||'서버에 연결할 수 없습니다. 잠시 후 다시 참가해 주세요.');
+ };
+ current.onerror=()=>{if(current===socket)connectionNotice='서버와 연결이 원활하지 않습니다. 다시 연결하고 있습니다.';};
+}
 $('press-start').onclick=()=>{if(screen!=='title')return;spatialAudio.unlock();showScreen('menu');};
 $('edit-name').onclick=()=>{$('profile-form').hidden=false;$('player-name').focus();};
 $('profile-form').onsubmit=e=>{e.preventDefault();const name=$('player-name').value.trim();if(!name||Array.from(name).length>12)return;profileName=name;$('room-player-name').value=name;try{localStorage.setItem('vector-name',name);}catch{}if(team!==null)send({type:'profile',name});$('profile-form').hidden=true;displayLobby();if(startPending){startPending=false;launchGame();}};
 function connectRoom(autoStart=false,options={}){
  if(!profileName||connecting||socket&&socket.readyState<2)return;
  const request={type:'join',room:$('room').value.trim(),name:profileName,weapon:chosen,primary:chosen,secondary:chosenSecondary,mode:chosenMode,...options};
- connecting=true;connectionNotice='';startPending=autoStart;socket=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}`);const current=socket;
- $('connection').textContent='● CONNECTING';setNavigationStatus('방에 접속하는 중…');displayLobby();
- current.onopen=()=>{if(current===socket)send(request);};
- current.onmessage=e=>{if(current!==socket)return;const m=JSON.parse(e.data);
-  if(m.type==='chatHistory'){ $('chat-messages').replaceChildren();for(const message of m.messages)addChat(message);}
-  if(m.type==='chat')addChat(m.message);
-  if(m.type==='joined'){ $('chat-messages').replaceChildren();$('chat-input').value='';team=m.team;$('connection').textContent='● ONLINE';}
-  if(m.type==='state'){if(Number.isFinite(m.serverTime))serverClockOffset=m.serverTime-Date.now();connecting=false;receive(m.state);if(startPending){startPending=false;if(m.state.mode==='ai'&&m.state.phase==='lobby'&&m.state.players[1]?.isBot)send({type:'ready'});displayLobby();}}
-  if(m.type==='error'||m.type==='closed'){startPending=false;connectionNotice=m.message;setNavigationStatus(m.message);$('lobby-status').textContent=m.message;$('match-notice').textContent=m.message;$('shop-status').textContent=m.message;$('chat-status').textContent=m.message;if(team===null)current.close();}
- };
- current.onclose=()=>{if(current!==socket)return;connecting=false;startPending=false;finishLobbyTurn();lobbyRotationOffsets.clear();lobbyRevision='';team=null;state=initial();pending=[];resultReturnPending=false;$('profile-form').hidden=true;$('connection').textContent='● OFFLINE';displayLobby();setNavigationStatus(connectionNotice);};
- current.onerror=()=>{connectionNotice='서버에 연결할 수 없습니다. 잠시 후 다시 참가하세요.';setNavigationStatus(connectionNotice);};
+ clearConnectionTimers();network.intentional=network.failed=network.reconnecting=false;network.ready=false;network.session=null;network.peerOffline=false;saveConnectionSession();
+ connecting=true;connectionNotice='';startPending=autoStart;$('connection').textContent='● CONNECTING';setNavigationStatus('방에 접속하는 중…');displayLobby();openGameSocket(request);
 }
 function renderModeSelector(mode,humans,me,waitingForResult){
  $('mode-formats').hidden=duelModesOpen;$('duel-mode-options').hidden=!duelModesOpen;$('mode-back').hidden=!duelModesOpen;
@@ -180,14 +278,14 @@ $('result-confirm').onclick=()=>{if(resultReturnPending||state.phase!=='results'
 
 function beginMatchEnding(){
  setBattleMenu(false);
- keys.clear();fire=false;scoped=false;touchScope=false;sprintRequested=false;jump=interact=false;dragAim=null;touch.forward=touch.strafe=0;pending=[];introGoUntil=0;
+ keys.clear();fire=fireQueued=false;scoped=false;touchScope=false;sprintRequested=false;jump=interact=false;dragAim=null;touch.forward=touch.strafe=0;pending=[];introGoUntil=0;
  $('battle-main').classList.add('ending');$('capture-overlay').hidden=true;$('death-overlay').hidden=true;$('respawn-shop').hidden=true;$('return-lobby').disabled=true;
  setHUDText('match-notice','전투 종료');syncBackgroundMusic();
 }
 function finishMatchPreparation(){
  if(state.phase!=='battle'||team===null)return;
  setBattleMenu(false);
- keys.clear();crouchRequested=false;fire=false;scoped=false;touchScope=false;jump=interact=false;pending=[];
+ keys.clear();crouchRequested=false;fire=fireQueued=false;scoped=false;touchScope=false;jump=interact=false;pending=[];
  predicted={...state.units[team]};yaw=predicted.yaw;pitch=predicted.pitch;
  touch.active=matchMedia('(pointer:coarse)').matches;dragMode=!touch.active&&document.pointerLockElement!==renderer.domElement;
  $('battle-main').classList.remove('preparing','ending');$('capture-overlay').hidden=true;$('return-lobby').disabled=false;
@@ -229,7 +327,7 @@ $('match-intro').addEventListener('pointerdown',()=>{if(isMatchPreparing())captu
 function startBattle(){resetCombatFeedback();spatialAudio.unlock();for(const mark of impactObjects.values()){impactLayer.remove(mark);mark.geometry.dispose();}impactObjects.clear();inBattle=true;introViewElapsed=0;introFrameAt=0;introReadySentAt=-Infinity;introGoUntil=0;lastCountdownBeat=null;crouchRequested=false;dragMode=false;dragAim=null;touch.active=false;touch.forward=touch.strafe=0;jump=interact=false;lastEvent=state.clock;pending=[];predicted={...state.units[team]};yaw=predicted.yaw;pitch=predicted.pitch;actorObjects.clear();const enemy=makeActor('swat',1.75,'battle');if(enemy){const idleClip=assets.swat.animations.find(c=>c.name.endsWith('|Idle_Gun_Pointing'));if(idleClip){enemy.mixer.stopAllAction();enemy.idle=enemy.mixer.clipAction(idleClip);enemy.idle.reset().play();}scene.add(enemy.root);actorObjects.set(1-team,enemy);}scoped=false;viewWeapon='';$('capture-overlay').hidden=isMatchPreparing();$('capture-title').textContent='실시간 1인칭 전투';$('capture-help').textContent='WASD 이동 · 마우스 조준 · 터치패드 탭/클릭으로 발사 · SPACE 점프 · C 웅크리기';$('battle-main').classList.toggle('preparing',isMatchPreparing());$('match-intro').hidden=!isMatchPreparing();$('return-lobby').disabled=isMatchPreparing();document.activeElement?.blur?.();if(state.phase==='ending')beginMatchEnding();else if(!isMatchPreparing())finishMatchPreparation();updateHUD();}
 function leaveBattle(){setBattleMenu(false);resetCombatFeedback();$('match-intro').hidden=true;$('battle-main').classList.remove('preparing','ending');$('return-lobby').disabled=false;introGoUntil=0;lastCountdownBeat=null;crouchRequested=false;dragAim=null;inBattle=false;fire=false;sprintRequested=false;moveBlend=runBlend=0;keys.clear();pending=[];scoped=false;predicted=null;for(const actor of actorObjects.values()){disposeRemoteCombat(actor);scene.remove(actor.root);const index=mixers.indexOf(actor.mixer);if(index>=0)mixers.splice(index,1);}actorObjects.clear();document.exitPointerLock?.();$('death-overlay').hidden=true;}
 function receive(next){const previousPhase=state.phase,wasDead=state.units[team]?.hp<=0,oldHp=state.units[team]?.hp;state=next;if(state.phase!=='results'||state.resultsConfirmed?.[team])resultReturnPending=false;setCrates(state.crates);setDoors(state.doors);const ending=state.phase==='ending';if(state.phase!=='battle'&&!ending){if(!isMatchPreparing()||!inBattle)displayLobby();return;}if(!inBattle){displayLobby();return;}if(ending){if(previousPhase!=='ending')beginMatchEnding();}else if(previousPhase!=='battle')finishMatchPreparation();
- const own=state.units[team];if(own.ladder!==null)scoped=false;pending=pending.filter(i=>i.seq>own.ack);predicted={...own};for(const input of pending)moveBody(predicted,input);if(!wasDead&&own.hp<=0){crouchRequested=false;$('shop-status').textContent='';keys.clear();fire=false;scoped=false;touchScope=false;$('capture-overlay').hidden=true;}if(!ending&&wasDead&&own.hp>0){crouchRequested=false;$('capture-overlay').hidden=true;if(!document.pointerLockElement&&!touch.active)dragMode=true;if($('respawn-shop').contains(document.activeElement))document.activeElement.blur();yaw=own.yaw;pitch=own.pitch;pending=[];predicted={...own};}if(oldHp!==undefined&&own.hp<oldHp)damageUntil=performance.now()+DAMAGE_FLASH_MS;
+ const own=state.units[team];if(own.ladder!==null)scoped=false;pending=pending.filter(i=>i.seq>own.ack);predicted={...own};for(const input of pending)moveBody(predicted,input);if(!wasDead&&own.hp<=0){crouchRequested=false;$('shop-status').textContent='';keys.clear();fire=fireQueued=false;scoped=false;touchScope=false;$('capture-overlay').hidden=true;}if(!ending&&wasDead&&own.hp>0){crouchRequested=false;$('capture-overlay').hidden=true;if(!document.pointerLockElement&&!touch.active)dragMode=true;if($('respawn-shop').contains(document.activeElement))document.activeElement.blur();yaw=own.yaw;pitch=own.pitch;pending=[];predicted={...own};}if(oldHp!==undefined&&own.hp<oldHp)damageUntil=performance.now()+DAMAGE_FLASH_MS;
  for(const e of state.events){if(e.id<=lastEvent)continue;lastEvent=e.id;if(e.type==='shot'){if(e.actor===team&&weapons[e.weapon]?.mag!=null){recoil=1;ownMuzzleAt=performance.now();ownMuzzleWeapon=e.weapon;ownMuzzleShot=e.id;}if(e.weapon!=='knife')spatialAudio.play(weapons[e.weapon]?.category==='smg'?'rifle':weapons[e.weapon]?.category||e.weapon,[e.x,e.y,e.z],e.actor===team?.8:1);}if(e.type==='footstep')spatialAudio.play(Math.random()<.5?'step1':'step2',[e.x,e.y,e.z],e.actor===team?.35:.8);if(e.type==='grenadeWindup'){spatialAudio.play('throw',[e.x,e.y,e.z],.6);if(e.actor===team){scoped=false;sprintRequested=false;buildViewWeapon('grenade');}}if(e.type==='purchase'&&e.actor===team){$('shop-status').textContent='구매 완료 · 50코인 차감';sound('hit');}if(e.type==='melee'){const remote=actorObjects.get(e.actor);if(remote)remote.remoteMeleeUntil=remoteNow()+380;if(e.actor===team){meleeStarted=performance.now();meleeUntil=meleeStarted+380;recoil=0;muzzle.intensity=0;buildViewWeapon('knife');}else{const actor=actorObjects.get(e.actor);const slash=actor?.directional.Sword_Slash;if(slash&&!state.units[e.actor]?.crouching){actor.mixer.stopAllAction();slash.setLoop(THREE.LoopOnce,1);slash.clampWhenFinished=true;slash.reset().play();actor.attackUntil=performance.now()+500;actor.currentAction='Sword_Slash';}}}if(e.type==='hit'){const now=performance.now();if(e.actor===team&&e.target!==team){hitUntil=now+200;sound('hit');}if(e.target===team&&e.actor!==team)damageUntil=now+DAMAGE_FLASH_MS;}if(e.type==='loot'&&e.actor===team){$('match-notice').textContent=e.loot==='life'?'목숨 +1 획득':'예비 탄약 +30 획득';lootMessage=e.loot==='life'?'목숨 +1 획득':'예비 탄약 +30 획득';lootUntil=performance.now()+2000;sound('hit');}if(e.type==='explosion'){const flash=new THREE.Mesh(new THREE.SphereGeometry(.5,8,6),new THREE.MeshBasicMaterial({color:0xffb548,transparent:true,opacity:.7}));flash.position.set(e.x,e.y,e.z);scene.add(flash);setTimeout(()=>{scene.remove(flash);flash.geometry.dispose();flash.material.dispose();},250);spatialAudio.play('explosion',[e.x,e.y,e.z],1);}}
  syncImpacts();updateHUD();}
 function buildViewWeapon(key){adsBlend=0;viewMuzzle=null;viewWeapon=key;heldGrenade=magazine=bolt=supportHand=null;viewModel.position.set(0,0,0);viewModel.rotation.set(0,0,0);viewModel.scale.setScalar(1);viewModel.traverse(o=>{if(!o.isSprite)o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose();});viewModel.clear();
@@ -256,8 +354,8 @@ $('lobby').addEventListener('lostpointercapture',e=>{if(lobbyDrag?.id===e.pointe
 function setBattleMenu(open,resume=false){
  if(open&&(!inBattle||state.phase!=='battle'||state.winner!==null))return;
  if(open===battleMenuOpen)return;
- battleMenuOpen=open;$('pause-menu').hidden=!open;$('battle-main').classList.toggle('menu-open',open);
- keys.clear();fire=false;scoped=false;touchScope=false;sprintRequested=false;jump=interact=false;dragMode=false;touch.active=false;touch.forward=touch.strafe=0;chatResume=false;
+ battleMenuOpen=open;fireQueued=false;$('pause-menu').hidden=!open;$('battle-main').classList.toggle('menu-open',open);
+ keys.clear();fire=fireQueued=false;scoped=false;touchScope=false;sprintRequested=false;jump=interact=false;dragMode=false;touch.active=false;touch.forward=touch.strafe=0;chatResume=false;
  if(dragAim&&renderer.domElement.hasPointerCapture?.(dragAim.id))renderer.domElement.releasePointerCapture(dragAim.id);
  dragAim=null;$('joystick').firstElementChild.style.transform='';
  document.activeElement?.blur?.();$('capture-overlay').hidden=true;inputFrame();
@@ -280,12 +378,12 @@ function handleMenuKey(e){
   buttons[(index+(e.shiftKey?-1:1)+buttons.length)%buttons.length]?.focus();
  }
 }
-function activeControl(){return state.phase==='battle'&&!battleMenuOpen&&!document.hidden&&document.activeElement!==$('chat-input')&&inBattle&&(document.pointerLockElement===renderer.domElement||dragMode||touch.active)&&state.units[team]?.hp>0&&state.winner===null;}
+function activeControl(){return network.ready&&state.phase==='battle'&&!battleMenuOpen&&!document.hidden&&document.activeElement!==$('chat-input')&&inBattle&&(document.pointerLockElement===renderer.domElement||dragMode||touch.active)&&state.units[team]?.hp>0&&state.winner===null;}
 function toggleCrouch(){if(!activeControl()||predicted?.ladder!==null)return;crouchRequested=!predicted.crouching;sprintRequested=false;inputFrame();}
 function swap(key){if(!inBattle||state.phase!=='battle'||battleMenuOpen)return;scoped=false;send({type:'equip',weapon:key});}
 function slot(n){const u=state.units[team];if(u)swap(n===1?u.primary:n===2?u.secondary:'knife');}
 function command(type){if(activeControl())send({type});}
-async function capture(){if(!inBattle||state.phase==='ending'||battleMenuOpen)return;spatialAudio.unlock();if(matchMedia('(pointer: coarse)').matches){touch.active=true;$('capture-overlay').hidden=true;return;}try{await renderer.domElement.requestPointerLock();}catch{$('capture-help').textContent='브라우저가 마우스 잠금을 차단했습니다. 새 탭에서 게임 링크를 열거나 드래그 조작을 사용하세요.';$('fallback-mouse').hidden=false;}}
+async function capture(){if(!network.ready||!inBattle||state.phase==='ending'||battleMenuOpen)return;spatialAudio.unlock();if(matchMedia('(pointer: coarse)').matches){touch.active=true;$('capture-overlay').hidden=true;return;}try{await renderer.domElement.requestPointerLock();}catch{$('capture-help').textContent='브라우저가 마우스 잠금을 차단했습니다. 새 탭에서 게임 링크를 열거나 드래그 조작을 사용하세요.';$('fallback-mouse').hidden=false;}}
 $('capture-mouse').onclick=capture;$('fallback-mouse').onclick=()=>{if(battleMenuOpen)return;dragMode=true;$('capture-overlay').hidden=true;};
 document.addEventListener('pointerlockchange',()=>{
  const locked=document.pointerLockElement===renderer.domElement,wasLocked=pointerWasLocked,suppressed=deliberatePointerUnlock;
@@ -296,8 +394,9 @@ document.addEventListener('pointerlockchange',()=>{
  $('capture-overlay').hidden=battleMenuOpen||isMatchPreparing()||state.units[team]?.hp<=0||state.winner!==null||locked||dragMode||touch.active;
  if(!locked){fire=false;keys.clear();inputFrame();}
 });
-document.addEventListener('mousemove',e=>{if(state.phase!=='battle'||battleMenuOpen||document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*(scoped?(isSniper(state.units[team]?.weapon)?.00055:.0012):.002);pitch=clamp(pitch-e.movementY*(scoped?(isSniper(state.units[team]?.weapon)?.00055:.0012):.002),-1.48,1.48);});
+document.addEventListener('mousemove',e=>{if(state.phase!=='battle'||!network.ready||battleMenuOpen||document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*(scoped?(isSniper(state.units[team]?.weapon)?.00055:.0012):.002);pitch=clamp(pitch-e.movementY*(scoped?(isSniper(state.units[team]?.weapon)?.00055:.0012):.002),-1.48,1.48);});
 document.addEventListener('keydown',e=>{
+ if(!$('connection-overlay').hidden){if(e.code==='Tab'){e.preventDefault();$('connection-exit').focus();}else if(!['Enter','NumpadEnter'].includes(e.code))e.preventDefault();return;}
  if(!entered&&(e.key==='Enter'||e.code==='Space')){e.preventDefault();$('press-start').click();return;}
  if(screen==='battle'&&(isMatchPreparing()||state.phase==='ending')){if(!e.ctrlKey&&!e.metaKey)e.preventDefault();return;}
  if(inBattle&&e.code==='Escape'){
@@ -324,16 +423,27 @@ document.addEventListener('keydown',e=>{
  if(/^Digit[123]$/.test(e.code))slot(Number(e.code.slice(-1)));
  inputFrame();
 });
-document.addEventListener('keyup',e=>{keys.delete(e.code);if(e.code==='KeyW')sprintRequested=false;inputFrame();});window.addEventListener('blur',()=>{finishLobbyTurn();keys.clear();sprintRequested=false;scoped=false;touchScope=false;fire=false;touch.forward=touch.strafe=0;});
-renderer.domElement.addEventListener('pointerdown',e=>{if(screen==='lobby')return;if(!inBattle||state.phase==='ending'||battleMenuOpen)return;if(e.pointerType==='touch'){touch.active=true;dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);return;}if(e.button===0&&activeControl()){if(dragMode&&document.pointerLockElement!==renderer.domElement)capture();fire=true;inputFrame();if(dragMode){dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);}}});
-renderer.domElement.addEventListener('pointermove',e=>{if(state.phase!=='battle'||battleMenuOpen||!dragAim||dragAim.id!==e.pointerId)return;yaw-=(e.clientX-dragAim.x)*.004;pitch=clamp(pitch-(e.clientY-dragAim.y)*.004,-1.48,1.48);dragAim.x=e.clientX;dragAim.y=e.clientY;});
+document.addEventListener('keyup',e=>{keys.delete(e.code);if(e.code==='KeyW')sprintRequested=false;inputFrame();});window.addEventListener('blur',()=>{finishLobbyTurn();keys.clear();sprintRequested=false;scoped=false;touchScope=false;fire=fireQueued=false;touch.forward=touch.strafe=0;});
+renderer.domElement.addEventListener('pointerdown',e=>{if(screen==='lobby')return;if(!inBattle||state.phase==='ending'||battleMenuOpen)return;if(e.pointerType==='touch'){touch.active=true;dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);return;}if(e.button===0&&activeControl()){if(dragMode&&document.pointerLockElement!==renderer.domElement)capture();fire=fireQueued=true;inputFrame();if(dragMode){dragAim={id:e.pointerId,x:e.clientX,y:e.clientY};renderer.domElement.setPointerCapture(e.pointerId);}}});
+renderer.domElement.addEventListener('pointermove',e=>{if(state.phase!=='battle'||!network.ready||battleMenuOpen||!dragAim||dragAim.id!==e.pointerId)return;yaw-=(e.clientX-dragAim.x)*.004;pitch=clamp(pitch-(e.clientY-dragAim.y)*.004,-1.48,1.48);dragAim.x=e.clientX;dragAim.y=e.clientY;});
 window.addEventListener('pointerup',e=>{if(lobbyDrag?.id===e.pointerId)finishLobbyTurn();if(e.button===0){fire=false;inputFrame();}if(dragAim?.id===e.pointerId)dragAim=null;});renderer.domElement.addEventListener('pointercancel',()=>{finishLobbyTurn();fire=false;dragAim=null;inputFrame();});renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 renderer.domElement.addEventListener('wheel',e=>{if(!activeControl())return;e.preventDefault();const u=state.units[team],list=[u.primary,u.secondary,'knife'];swap(list[(list.indexOf(u.weapon)+(e.deltaY>0?1:2))%3]);},{passive:false});
-$('touch-fire').onpointerdown=e=>{e.preventDefault();if(battleMenuOpen)return;touch.active=true;fire=true;inputFrame();e.target.setPointerCapture(e.pointerId);};$('touch-fire').onpointerup=()=>{fire=false;inputFrame();};$('touch-fire').onpointercancel=()=>{fire=false;inputFrame();};
+$('touch-fire').onpointerdown=e=>{e.preventDefault();if(battleMenuOpen)return;touch.active=true;fire=fireQueued=true;inputFrame();e.target.setPointerCapture(e.pointerId);};$('touch-fire').onpointerup=()=>{fire=false;inputFrame();};$('touch-fire').onpointercancel=()=>{fire=false;inputFrame();};
 $('touch-crouch').onclick=toggleCrouch;
 $('touch-interact').onclick=()=>{if(battleMenuOpen)return;interact=true;inputFrame();};$('touch-jump').onclick=()=>{if(battleMenuOpen)return;jump=true;};$('touch-reload').onclick=()=>command('reload');$('touch-melee').onclick=()=>command('melee');$('touch-grenade').onclick=()=>command('grenade');$('touch-scope').onpointerdown=e=>{e.preventDefault();if(battleMenuOpen)return;touchScope=true;touch.active=true;e.target.setPointerCapture(e.pointerId);inputFrame();};for(const type of ['pointerup','pointercancel'])$('touch-scope').addEventListener(type,()=>{touchScope=false;inputFrame();});
 $('joystick').onpointerdown=e=>{if(battleMenuOpen)return;touch.active=true;e.currentTarget.setPointerCapture(e.pointerId);};$('joystick').onpointermove=e=>{if(battleMenuOpen||!e.currentTarget.hasPointerCapture(e.pointerId))return;const r=e.currentTarget.getBoundingClientRect();touch.strafe=clamp((e.clientX-r.left-r.width/2)/40,-1,1);touch.forward=clamp(-(e.clientY-r.top-r.height/2)/40,-1,1);e.currentTarget.firstElementChild.style.transform=`translate(${touch.strafe*25}px,${-touch.forward*25}px)`;};for(const type of ['pointerup','pointercancel'])$('joystick').addEventListener(type,()=>{touch.forward=touch.strafe=0;$('joystick').firstElementChild.style.transform='';});
-function inputFrame(){if(state.phase!=='battle'||!inBattle||!predicted||socket?.readyState!==WebSocket.OPEN||state.winner!==null)return;if(predicted.ladder!==null){scoped=false;crouchRequested=false;}const enabled=activeControl();scoped=enabled&&canAim(state.units[team]?.weapon)&&!state.units[team].reloadUntil&&!state.units[team].throwUntil&&performance.now()>=meleeUntil&&predicted.ladder===null&&(touchScope||keys.has('ShiftLeft')||keys.has('ShiftRight'));if(crouchRequested||scoped||fire||state.units[team].reloadUntil||state.units[team].throwUntil||predicted.ladder!==null)sprintRequested=false;const input={type:'input',seq:++seq,yaw,pitch,forward:enabled?touch.forward+(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0):0,strafe:enabled?touch.strafe+(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0):0,jump:enabled&&jump,crouch:enabled?crouchRequested:!!predicted.crouching,interact:enabled&&interact,sprint:enabled&&!crouchRequested&&!predicted.crouching&&!scoped&&!fire&&!state.units[team].reloadUntil&&!state.units[team].throwUntil&&(sprintRequested||(state.units[team]?.weapon==='knife'&&(keys.has('ShiftLeft')||keys.has('ShiftRight')))),fire:enabled&&fire,scoped};jump=false;interact=false;send(input);pending.push(input);if(pending.length>90)pending.shift();moveBody(predicted,input);spatialAudio.updateListener(predicted,yaw,pitch);}
+function inputFrame(){
+ if(!network.ready||state.phase!=='battle'||!inBattle||!predicted||socket?.readyState!==WebSocket.OPEN||state.winner!==null)return;
+ const enabled=activeControl();if(!enabled)fireQueued=false;
+ // DOM events only change intent. Predict and transmit one fixed physics step at most 30 times a second.
+ const now=performance.now();if(now-lastInputSentAt<STEP*1000-.5)return;
+ if(predicted.ladder!==null){scoped=false;crouchRequested=false;}
+ scoped=enabled&&canAim(state.units[team]?.weapon)&&!state.units[team].reloadUntil&&!state.units[team].throwUntil&&now>=meleeUntil&&predicted.ladder===null&&(touchScope||keys.has('ShiftLeft')||keys.has('ShiftRight'));
+ if(crouchRequested||scoped||fire||fireQueued||state.units[team].reloadUntil||state.units[team].throwUntil||predicted.ladder!==null)sprintRequested=false;
+ const input={type:'input',seq:seq+1,yaw,pitch,forward:enabled?touch.forward+(keys.has('KeyW')?1:0)-(keys.has('KeyS')?1:0):0,strafe:enabled?touch.strafe+(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0):0,jump:enabled&&jump,crouch:enabled?crouchRequested:!!predicted.crouching,interact:enabled&&interact,sprint:enabled&&!crouchRequested&&!predicted.crouching&&!scoped&&!fire&&!fireQueued&&!state.units[team].reloadUntil&&!state.units[team].throwUntil&&(sprintRequested||(state.units[team]?.weapon==='knife'&&(keys.has('ShiftLeft')||keys.has('ShiftRight')))),fire:enabled&&(fire||fireQueued),scoped};
+ if(!send(input))return;
+ seq=input.seq;lastInputSentAt=now;jump=interact=fireQueued=false;pending.push(input);if(pending.length>90)pending.shift();moveBody(predicted,input);spatialAudio.updateListener(predicted,yaw,pitch);
+}
 // Bake the unchanged map once; only the local player's marker is redrawn.
 const radarCanvas=$('minimap'),radarContext=radarCanvas.getContext('2d',{alpha:false});
 let radarBackground;
@@ -453,6 +563,15 @@ function adaptRenderResolution(elapsed,time){
 const observer=new ResizeObserver(resize);for(const id of ['title-viewport','lobby-viewport','viewport'])observer.observe($(id));
 // Network input and physics stay at their original fixed 30 Hz, independent of display refresh.
 const inputTimer=setInterval(inputFrame,1000/30);
+const connectionTimer=setInterval(()=>{
+ if(!network.session||network.intentional||network.failed)return;
+ if(network.reconnecting){if(assetsReady&&Date.now()-network.startedAt>=65000)failReconnect('재연결 대기 시간이 끝났습니다. 방 메뉴에서 다시 참가해 주세요.');return;}
+ if(!network.ready)return;
+ if(!document.hidden&&Date.now()-network.lastMessageAt>20000){retryConnectionNow();return;}
+ send({type:'ping'});
+},5000);
+window.addEventListener('offline',retryConnectionNow);
+window.addEventListener('online',()=>{if(network.reconnecting)retryConnectionNow();});
 const grenadeObjects=new Map(),crateObjects=new Map(),cameraTarget=new THREE.Vector3(),remoteTarget=new THREE.Vector3();
 let lastTime=0,frameRequest=0;
 function syncRenderLoop(){
@@ -460,10 +579,11 @@ function syncRenderLoop(){
  if(!frameRequest){lastTime=0;qualityFrames=qualityElapsed=0;qualityWindowAt=performance.now();frameRequest=requestAnimationFrame(renderFrame);}
 }
 document.addEventListener('visibilitychange',()=>{
- if(document.hidden){introFrameAt=0;keys.clear();fire=false;scoped=false;touchScope=false;sprintRequested=false;touch.forward=touch.strafe=0;inputFrame();}
+ if(document.hidden){introFrameAt=0;keys.clear();fire=fireQueued=false;scoped=false;touchScope=false;sprintRequested=false;touch.forward=touch.strafe=0;inputFrame();}
+ else if(network.ready){network.lastMessageAt=Date.now();send({type:'ping'});}
  syncRenderLoop();
 });
-window.addEventListener('beforeunload',()=>{clearInterval(inputTimer);if(frameRequest)cancelAnimationFrame(frameRequest);});
+window.addEventListener('beforeunload',()=>{clearInterval(connectionTimer);clearInterval(inputTimer);if(frameRequest)cancelAnimationFrame(frameRequest);});
 function syncBattleProps(time){
  for(const c of state.crates){let obj=crateObjects.get(c.id);const version=c.broken?'loot':'box';if(obj?.userData.version!==version){if(obj){scene.remove(obj);obj.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});}obj=new THREE.Group();obj.userData.version=version;if(!c.broken){box(obj,.8,.75,.8,0x775539,0,.375,0);box(obj,.84,.07,.84,0xaca074,0,.72,0);box(obj,.07,.7,.82,0x332e23,-.27,.36,0);box(obj,.07,.7,.82,0x332e23,.27,.36,0);}else{box(obj,.28,.35,.24,c.loot==='life'?0x70e1b0:0xe9c16d,0,.4,0);if(c.loot==='life'){box(obj,.2,.05,.03,0xffffff,0,.42,.14);box(obj,.05,.2,.03,0xffffff,0,.42,.14);}}scene.add(obj);crateObjects.set(c.id,obj);}obj.visible=!c.taken;obj.position.set(c.x,c.y+(c.broken?Math.sin(time*.003)*.08:0),c.z);}
  for(const [id,obj] of crateObjects)if(!state.crates.some(c=>c.id===id)){scene.remove(obj);obj.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});crateObjects.delete(id);}
@@ -486,12 +606,12 @@ function renderFrame(time){
  syncBattleProps(time);if(time-lastRadarAt>=50){radar();lastRadarAt=time;}renderer.render(scene,camera);
  }else{for(const record of lobbyActorRecords){const id=record.own?team:1-team,key=team===null?chosen:state.units[id]?.primary||'rifle';updateLobbyWeapon(record.actor,key,weaponAssets);}renderer.render(lobbyScene,lobbyCamera);}
 }
-async function loadAssets(){try{await Promise.all([...['dying','rifle-idle','crouch-idle'].map(async key=>{const response=await fetch(`/assets/${key}.json`);if(!response.ok)throw Error('Motion '+key);motionClips[key]=THREE.AnimationClip.parse(await response.json());assetVersion++;displayLobby();}),...Object.entries(weapons).filter(([,w])=>w.model).map(async([key,w])=>{weaponAssets[key]=(await new GLTFLoader().loadAsync(`/assets/weapons/${w.model}.glb`)).scene;}),...['swat','arena','collision'].map(async key=>{const gltf=await new GLTFLoader().loadAsync(`/assets/${key}.glb?v=6`);if(key!=='collision'){const materials=new Map(),convert=m=>{if(!materials.has(m))materials.set(m,new THREE.MeshLambertMaterial({color:m.color,vertexColors:m.vertexColors,side:key==='arena'?THREE.DoubleSide:m.side,transparent:m.transparent,opacity:m.opacity}));return materials.get(m);};gltf.scene.traverse(o=>{if(o.isMesh)o.material=Array.isArray(o.material)?o.material.map(convert):convert(o.material);});}if(key==='arena'){gltf.scene.scale.setScalar(mapData.scale);scene.add(gltf.scene);gltf.scene.updateMatrixWorld(true);gltf.scene.traverse(o=>{o.matrixAutoUpdate=false;o.matrixWorldAutoUpdate=false;});mapRoot=gltf.scene;}else if(key==='collision'){gltf.scene.scale.setScalar(mapData.scale);gltf.scene.updateMatrixWorld(true);setWorld(new CollisionWorld(gltf.scene));}else assets[key]=gltf;assetVersion++;displayLobby();})]);assetsReady=true;$('asset-status').textContent='REAL-TIME FPS · 맵/캐릭터/충돌 준비 완료';displayLobby();}catch(error){console.error(error);$('asset-status').textContent='3D 에셋을 불러오지 못했습니다. 새로고침해 주세요.';}}
-displayLobby();loadAssets();
+async function loadAssets(){try{await Promise.all([...['dying','rifle-idle','crouch-idle'].map(async key=>{const response=await fetch(`/assets/${key}.json`);if(!response.ok)throw Error('Motion '+key);motionClips[key]=THREE.AnimationClip.parse(await response.json());assetVersion++;displayLobby();}),...Object.entries(weapons).filter(([,w])=>w.model).map(async([key,w])=>{weaponAssets[key]=(await new GLTFLoader().loadAsync(`/assets/weapons/${w.model}.glb`)).scene;}),...['swat','arena','collision'].map(async key=>{const gltf=await new GLTFLoader().loadAsync(`/assets/${key}.glb?v=6`);if(key!=='collision'){const materials=new Map(),convert=m=>{if(!materials.has(m))materials.set(m,new THREE.MeshLambertMaterial({color:m.color,vertexColors:m.vertexColors,side:key==='arena'?THREE.DoubleSide:m.side,transparent:m.transparent,opacity:m.opacity}));return materials.get(m);};gltf.scene.traverse(o=>{if(o.isMesh)o.material=Array.isArray(o.material)?o.material.map(convert):convert(o.material);});}if(key==='arena'){gltf.scene.scale.setScalar(mapData.scale);scene.add(gltf.scene);gltf.scene.updateMatrixWorld(true);gltf.scene.traverse(o=>{o.matrixAutoUpdate=false;o.matrixWorldAutoUpdate=false;});mapRoot=gltf.scene;}else if(key==='collision'){gltf.scene.scale.setScalar(mapData.scale);gltf.scene.updateMatrixWorld(true);setWorld(new CollisionWorld(gltf.scene));}else assets[key]=gltf;assetVersion++;displayLobby();})]);assetsReady=true;$('asset-status').textContent='REAL-TIME FPS · 맵/캐릭터/충돌 준비 완료';displayLobby();if(network.restorePending&&network.session){network.restorePending=false;network.startedAt=Date.now();openGameSocket({type:'resume',...network.session});}}catch(error){console.error(error);$('asset-status').textContent='3D 에셋을 불러오지 못했습니다. 새로고침해 주세요.';if(network.restorePending)failReconnect('3D 에셋을 불러오지 못했습니다. 새로고침한 뒤 다시 참가해 주세요.');}}
+restoreSessionAfterReload();displayLobby();loadAssets();
 
 function addChat(message){if(message.team===team&&$('chat-input').value.trim()===message.text)$('chat-input').value='';const row=document.createElement('div'),name=document.createElement('b'),body=document.createElement('span');name.textContent=message.name+': ';name.style.color=message.team===0?'#75cbff':'#ff8877';body.textContent=message.text;row.append(name,body);$('chat-messages').append(row);while($('chat-messages').children.length>30)$('chat-messages').firstElementChild.remove();$('chat-messages').scrollTop=$('chat-messages').scrollHeight;$('chat-status').textContent='같은 방 채팅 · M 입력';}
-function focusChat(){if(battleMenuOpen)return;chatResume=!!document.pointerLockElement||dragMode;keys.clear();sprintRequested=false;fire=false;scoped=false;touchScope=false;inputFrame();if(document.pointerLockElement){deliberatePointerUnlock=true;document.exitPointerLock?.();}setTimeout(()=>{if(!battleMenuOpen)$('chat-input').focus();},0);}
-$('chat-input').addEventListener('focus',()=>{keys.clear();sprintRequested=false;fire=false;scoped=false;touchScope=false;inputFrame();});
+function focusChat(){if(battleMenuOpen||inBattle&&!network.ready)return;chatResume=!!document.pointerLockElement||dragMode;keys.clear();sprintRequested=false;fire=fireQueued=false;scoped=false;touchScope=false;inputFrame();if(document.pointerLockElement){deliberatePointerUnlock=true;document.exitPointerLock?.();}setTimeout(()=>{if(!battleMenuOpen&&(!inBattle||network.ready))$('chat-input').focus();},0);}
+$('chat-input').addEventListener('focus',()=>{keys.clear();sprintRequested=false;fire=fireQueued=false;scoped=false;touchScope=false;inputFrame();});
 function finishChat(){ $('chat-input').blur();if(inBattle&&chatResume){chatResume=false;capture();}}
 $('chat-input').addEventListener('keydown',e=>{e.stopPropagation();if(e.code==='Escape'){e.preventDefault();finishChat();}});
 $('chat-form').onsubmit=e=>{e.preventDefault();const text=$('chat-input').value.trim();if(!text)return;if(team===null){$('chat-status').textContent='먼저 방 참가 또는 AI 게임 시작으로 접속하세요.';return;}send({type:'chat',text});finishChat();};
@@ -519,6 +639,6 @@ function createRoom(mode='pvp'){if(team!==null||!saveRoomName())return;chosenMod
 $('browser-create').onclick=()=>createRoom();$('menu-ai').onclick=()=>createRoom('ai');
 $('open-public').onclick=()=>{if(saveRoomName())showScreen('rooms');};$('open-private').onclick=()=>{if(saveRoomName())showScreen('private');};
 $('menu-back').onclick=()=>showScreen('title');$('rooms-back').onclick=() =>showScreen('menu');$('private-back').onclick=()=>showScreen('menu');$('refresh-rooms').onclick=refreshRooms;
-$('leave-room').onclick=()=>{if(team!==null){chosen=state.units[team].primary;chosenSecondary=state.units[team].secondary;}connectionNotice='';connecting=true;displayLobby();socket?.close();$('chat-messages').replaceChildren();};
+$('leave-room').onclick=leaveRoomConnection;
 $('code-join').onsubmit=e=>{e.preventDefault();if(connecting||team!==null)return;chosenMode='pvp';$('room').value=$('private-room-code').value.trim();connectRoom(false,{joinExisting:true});};
 setInterval(()=>{if(screen==='rooms'&&!connecting)refreshRooms();},5000);

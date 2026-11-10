@@ -123,3 +123,6 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 
 .placeholder-mode-options button:disabled{opacity:.55;cursor:default}
 #team-mode-options button{min-width:0;padding:9px 6px;font-size:12px;white-space:nowrap}
+#solo-team-mode-options #mode-zombie:enabled{opacity:1;cursor:pointer}
+#horde-status{position:absolute;top:86px;left:50%;transform:translateX(-50%);z-index:7;padding:7px 12px;background:#101a24c9;border:1px solid #82966c;color:#e1ecc7;max-width:90vw;font-size:11px;text-align:center;pointer-events:none;white-space:nowrap}
+@media(max-width:600px){#horde-status{top:68px;font-size:9px;padding:6px 8px}}

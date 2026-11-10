@@ -5,7 +5,7 @@
 <div id="peer-connection-notice" role="status" hidden>상대가 다시 연결하는 중입니다. 잠시 기다려 주세요.</div>
 <section id="lobby" class="lobby" hidden>
 <div id="lobby-viewport"></div><div id="asset-status" role="status">3D 에셋 로딩 중…</div><div class="lobby-shade"></div>
-<div class="lobby-profile"><span class="rank-badge">DM</span><div><p class="eyebrow">OPERATOR / LV. 01</p><h1 id="display-name">이름을 설정하세요</h1><span id="lobby-coins" class="coin-balance">◉ 300</span><span class="profile-sub">DEATH MATCH · 실시간 1 대 1 FPS</span></div><button id="edit-name" class="quiet">이름 변경</button></div>
+<div class="lobby-profile"><span class="rank-badge">DM</span><div><p class="eyebrow">OPERATOR / LV. 01</p><h1 id="display-name">이름을 설정하세요</h1><span id="lobby-coins" class="coin-balance">◉ 300</span><span id="profile-mode" class="profile-sub">DEATH MATCH · 실시간 1 대 1 FPS</span></div><button id="edit-name" class="quiet">이름 변경</button></div>
 <section class="mode-selector" aria-label="게임 모드">
  <div class="mode-selector-heading"><button id="mode-back" type="button" aria-label="대전 형식 선택으로 돌아가기" hidden>←</button><span id="mode-heading">GAME MODE</span></div>
  <div id="mode-formats" role="group" aria-label="대전 형식 선택">
@@ -14,7 +14,7 @@
   <button id="mode-teamvteam" type="button" aria-expanded="false" aria-controls="team-mode-options">TeamvsTeam</button>
  </div>
  <div id="duel-mode-options" role="group" aria-label="1vs1 전투 방식 선택" hidden><button id="mode-ai" type="button" aria-pressed="true">AI 훈련</button><button id="mode-pvp" type="button" aria-pressed="false">PVP 대전</button></div>
- <div id="solo-team-mode-options" class="placeholder-mode-options" role="group" aria-label="1vsTeam 전투 방식" hidden><button type="button" disabled title="준비 중">좀비 전투</button></div>
+ <div id="solo-team-mode-options" class="placeholder-mode-options" role="group" aria-label="1vsTeam 전투 방식" hidden><button id="mode-zombie" type="button" aria-pressed="false">좀비 전투</button></div>
  <div id="team-mode-options" class="placeholder-mode-options" role="group" aria-label="TeamvsTeam 전투 방식" hidden><button type="button" disabled title="준비 중">일반 전투</button><button type="button" disabled title="준비 중">거점 전투</button><button type="button" disabled title="준비 중">좀비 전투</button></div>
  <small id="mode-hint">대전 형식을 선택하세요.</small>
 </section><div class="lobby-heading"><span class="eyebrow">OPERATIONS BASE / HANGAR 07</span><h2>출격 준비</h2></div>
@@ -84,7 +84,7 @@
   <p>내 조작만 멈춥니다.<br>상대방과 AI, 제한시간은 계속 진행됩니다.</p>
  </div>
 </section>
-<div id="match-notice" role="status"></div><div id="hit-marker" class="combat-marker" aria-hidden="true" hidden>+</div>
+<div id="horde-status" role="status" hidden></div><div id="match-notice" role="status"></div><div id="hit-marker" class="combat-marker" aria-hidden="true" hidden>+</div>
 <div id="battle-chat-anchor"></div><div class="fps-radar"><span id="minimap-player-label">내 위치 · BLUE</span><canvas aria-label="맵과 내 위치만 표시" id="minimap" width="192" height="128"></canvas></div>
 <div class="fps-health"><span>HP <b id="hp-text">100</b></span><div class="health-track"><div id="hp-fill"></div></div><small id="grenade-count">수류탄 2</small><small id="stance-status">서 있음 · C 웅크리기</small></div>
 <div class="fps-ammo"><span id="equipped-name">AR-01 라이플</span><div><strong id="ammo-current">30</strong><span id="ammo-max"> / 30</span></div><small id="reload-status">R 재장전 · 예비탄 ∞</small></div>

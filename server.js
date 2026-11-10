@@ -10,7 +10,8 @@ import {initial,action,tick,cleanInput,weapons,returnToLobby,configureMode} from
 import {setWorld} from './physics.js';
 import {buildNavigation,createBrain,botInput} from './bot.js';
 import {loadWorld} from './world.js';
-const world=await loadWorld();setWorld(world);const navigation=buildNavigation(world);
+import {buildHordeNavigation,packZombies} from './zombies.js';
+const world=await loadWorld();setWorld(world);const navigation=buildNavigation(world);buildHordeNavigation(world);
 const derivePassword=promisify(scrypt);
 function roomPasswordError(message,code){const error=new Error(message);error.code=code;return error;}
 function readRoomPassword(value){
@@ -31,6 +32,8 @@ async function verifyRoomPassword(room,value,now){
 const assets={'/assets/soldier-rigged.glb':['public/assets/soldier-rigged.glb','model/gltf-binary'],'/assets/crouch-idle.json':['public/assets/crouch-idle.json','application/json'],'/assets/dying.json':['public/assets/dying.json','application/json'],'/assets/rifle-idle.json':['public/assets/rifle-idle.json','application/json'],'/remote-combat.js':['public/remote-combat.js','text/javascript'],'/weapon-model.js':['public/weapon-model.js','text/javascript'],'/weapons.js':['weapons.js','text/javascript'],'/':['public/index.html','text/html'],'/style.css':['public/style.css','text/css'],'/client.js':['public/client.js','text/javascript'],'/game.js':['game.js','text/javascript'],'/three.js':['node_modules/three/build/three.module.js','text/javascript']};
 Object.assign(assets,{'/bvh.js':['node_modules/three-mesh-bvh/build/index.module.js','text/javascript'],'/collision-world.js':['collision-world.js','text/javascript'],'/spatial-audio.js':['public/spatial-audio.js','text/javascript'],'/audio/credits':['public/audio/CREDITS.md','text/plain'],'/environment.js':['environment.js','text/javascript'],'/physics.js':['physics.js','text/javascript'],'/map-data.js':['map-data.js','text/javascript'],'/assets/minimap.webp':['public/assets/minimap.webp','image/webp'],'/assets/collision.glb':['public/assets/collision.glb','model/gltf-binary'],'/assets/title-background.webp':['public/assets/title-background.webp','image/webp'],'/assets/death-match-logo.webp':['public/assets/death-match-logo.webp','image/webp'],'/assets/arena.glb':['public/assets/arena.glb','model/gltf-binary'],'/assets/soldier.glb':['public/assets/soldier.glb','model/gltf-binary'],'/assets/swat.glb':['public/assets/swat.glb','model/gltf-binary']});
 for(const path of ['loaders/GLTFLoader.js','utils/BufferGeometryUtils.js','utils/SkeletonUtils.js','math/Capsule.js'])assets['/addons/'+path]=['node_modules/three/examples/jsm/'+path,'text/javascript'];
+assets['/zombies.js']=['zombies.js','text/javascript'];assets['/zombie-render.js']=['public/zombie-render.js','text/javascript'];
+for(const key of ['zombie-cop','zombie-embedded']){assets['/assets/'+key+'.glb']=['public/assets/'+key+'.glb','model/gltf-binary'];assets['/assets/'+key+'-motions.json']=['public/assets/'+key+'-motions.json','application/json'];}
 for(const sound of ['rifle','sniper','pistol','explosion','step1','step2','throw'])assets['/audio/'+sound+'.wav']=['public/audio/'+sound+'.wav','audio/wav'];
 for(const w of Object.values(weapons))if(w.model)for(const [ext,type]of [['glb','model/gltf-binary'],['webp','image/webp']])assets['/assets/weapons/'+w.model+'.'+ext]=['public/assets/weapons/'+w.model+'.'+ext,type];
 const cachedAssets=new Map(await Promise.all(Object.entries(assets).map(async([path,[file,type]])=>[path,{body:await readFile(new URL(file,import.meta.url)),type}])));
@@ -58,7 +61,7 @@ function serveMusic(req,res,track){
  const stream=createReadStream(track.file,{start,end});
  stream.on('error',()=>res.destroy());res.once('close',()=>stream.destroy());stream.pipe(res);
 }
-const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.state.players.filter(p=>p&&!p.isBot).length,capacity:2,phase:r.state.phase,mode:r.state.mode,locked:!!r.password}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const music=musicTracks.get(pathname);if(music){serveMusic(req,res,music);return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.state.players.filter(p=>p&&!p.isBot).length,capacity:r.state.mode==='zombie'?1:2,phase:r.state.phase,mode:r.state.mode,locked:!!r.password}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const music=musicTracks.get(pathname);if(music){serveMusic(req,res,music);return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
 const wss=new WebSocketServer({server,maxPayload:4096});
 const rooms=new Map(),sessions=new Map();
 const RECONNECT_GRACE_MS=60000,STATE_BUFFER_LIMIT=65536;
@@ -74,7 +77,7 @@ function clearSeatInputs(room,team){room.inputs[team]=null;room.inputAt[team]=0;
 function resetMatch(room){room.state=returnToLobby(room.state);room.brain=createBrain();for(let i=0;i<2;i++){clearSeatInputs(room,i);if(room.sessions[i])room.sessions[i].lastSequence=0;}}
 function broadcast(room){
  const connected=room.players.map(ws=>ws?.readyState===WebSocket.OPEN);
- const message=JSON.stringify({type:'state',serverTime:Date.now(),state:room.state,ready:room.state.players.every(Boolean),connected,passwordProtected:!!room.password});
+ const message=JSON.stringify({type:'state',serverTime:Date.now(),state:room.state.mode==='zombie'?{...room.state,zombies:packZombies(room.state.zombies)}:room.state,ready:room.state.players.every(Boolean),connected,passwordProtected:!!room.password});
  for(const ws of room.players)send(ws,message,true);
 }
 function closeRoom(room,message,code){
@@ -129,6 +132,7 @@ wss.on('connection',ws=>{
      rooms.set(a.room,{state:initial(),brain:createBrain(),players:[null,null],sessions:[null,null],inputs:[null,null],inputAt:[0,0],jumpPending:[false,false],interactPending:[false,false],firePending:[false,false],chat:[],private:!!a.private,code:a.room,password:null,passwordVersion:0,passwordRequest:0,passwordUpdating:false,authTokens:10,authRefilledAt:now});
     }
     const candidate=rooms.get(a.room);
+    if(candidate.state.mode==='zombie'&&candidate.state.players.some(p=>p&&!p.isBot))throw Error('1vsTeam 좀비 전투는 1인 전용 방입니다.');
     if(candidate.state.players.filter(p=>p&&!p.isBot).length>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('전투 또는 결과 확인이 진행 중입니다. 로비로 돌아온 뒤 참가해 주세요.');
     const passwordVersion=candidate.passwordVersion,suppliedPassword=readRoomPassword(a.password??'');
     if(candidate.password||candidate.passwordUpdating)await verifyRoomPassword(candidate,suppliedPassword,now);
@@ -137,10 +141,11 @@ wss.on('connection',ws=>{
     if(passwordVersion!==candidate.passwordVersion||candidate.passwordUpdating)throw roomPasswordError('방 비밀번호가 변경되었습니다. 다시 입력하세요.','PASSWORD_CHANGED');
     // Recheck after the asynchronous password check before assigning a seat.
     const humans=candidate.state.players.filter(p=>p&&!p.isBot).length;
+    if(candidate.state.mode==='zombie'&&humans>0)throw Error('1vsTeam 좀비 전투는 1인 전용 방입니다.');
     if(humans>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('전투 또는 결과 확인이 진행 중입니다. 로비로 돌아온 뒤 참가해 주세요.');
     const seat=candidate.state.players.findIndex(p=>!p||p.isBot);
     candidate.state.players[seat]={name:a.name?.trim()||`오퍼레이터 ${seat+1}`,ready:false};
-    configureMode(candidate.state,humans+1===2?'pvp':a.mode==='pvp'?'pvp':'ai');
+    configureMode(candidate.state,humans+1===2?'pvp':['pvp','zombie'].includes(a.mode)?a.mode:'ai');
     const unit=candidate.state.units[seat];
     if(Object.hasOwn(weapons,a.weapon)){unit.weapon=a.weapon;if(isPrimary(a.weapon))unit.primary=a.weapon;if(isSidearm(a.weapon))unit.secondary=a.weapon;}
     if(isPrimary(a.primary))unit.primary=a.primary;if(isSidearm(a.secondary))unit.secondary=a.secondary;

@@ -1,5 +1,32 @@
 import * as THREE from 'three';
 import {weapons,isSidearm,isSniper,aimProfiles} from '../weapons.js';
+// One cached texture serves all first-person and opponent flashes without extra asset requests.
+let muzzleTexture=null;
+const MUZZLE_FLASH_MS=60;
+export function createMuzzleFlash(key){
+ if(!muzzleTexture){
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=128;
+  const ctx=canvas.getContext('2d'),glow=ctx.createRadialGradient(64,64,3,64,64,62);
+  glow.addColorStop(0,'#fff');glow.addColorStop(.16,'#fffde0');glow.addColorStop(.38,'#ffe582');glow.addColorStop(.72,'#ffad3566');glow.addColorStop(1,'#ff741000');
+  ctx.fillStyle=glow;ctx.beginPath();
+  for(let i=0;i<24;i++){const angle=i*Math.PI/12,radius=i%2?15+(i%3)*3:42+(i%5)*4,x=64+Math.cos(angle)*radius,y=64+Math.sin(angle)*radius;if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);}
+  ctx.closePath();ctx.fill();
+  muzzleTexture=new THREE.CanvasTexture(canvas);muzzleTexture.colorSpace=THREE.SRGBColorSpace;
+ }
+ const root=new THREE.Group();root.name='muzzle-flash';root.visible=false;
+ const flare=new THREE.Sprite(new THREE.SpriteMaterial({map:muzzleTexture,color:0xffffff,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,toneMapped:false}));
+ flare.position.z=-.2;root.add(flare);
+ const core=new THREE.Mesh(new THREE.ConeGeometry(.12,.8,6),new THREE.MeshBasicMaterial({color:0xfff0b5,transparent:true,opacity:.8,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide,toneMapped:false}));
+ core.rotation.x=-Math.PI/2;core.position.z=-.4;root.add(core);
+ root.userData={flare,core,size:isSidearm(key)?.12:isSniper(key)?.2:.16};return root;
+}
+export function updateMuzzleFlash(root,age,shot=0,sizeScale=1){
+ if(!root)return;
+ root.visible=age>=0&&age<MUZZLE_FLASH_MS;if(!root.visible)return;
+ const fade=1-age/MUZZLE_FLASH_MS,{flare,core,size}=root.userData;
+ root.scale.setScalar(size*sizeScale*(.85+Math.sin(shot*12.9898)*.12)*(.8+.2*fade));
+ flare.material.rotation=shot*2.39996;flare.material.opacity=Math.min(1,fade*1.5);core.material.opacity=fade*.8;
+}
 // All uploaded files become metre-scaled, with their muzzle at (0,0,0), facing -Z.
 export function createWeaponModel(source,key){
  const model=source.clone(true),outer=new THREE.Group(),w=weapons[key];outer.name='weapon-model-'+key;outer.add(model);

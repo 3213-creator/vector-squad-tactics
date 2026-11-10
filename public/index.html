@@ -48,16 +48,28 @@
  <div id="intro-progress" class="intro-progress"><i id="intro-progress-fill"></i></div>
  <p id="intro-caption">맵을 둘러보는 중 · 이동과 공격은 시작 신호 후에 가능합니다.</p>
 </div><div id="damage-flash"></div><div id="spawn-shield-overlay" hidden></div><div id="crosshair" class="fps-crosshair">+</div><div id="scope" hidden><div class="scope-lines"></div></div>
-<section class="fps-lives"><span id="battle-name">OPERATOR</span><div id="lives" aria-label="남은 목숨">♥ ♥ ♥</div><span id="battle-coins" class="coin-balance">◉ 300</span><small id="life-label">목숨 3 / 3</small></section>
-<div class="fps-top"><span id="battle-mode">DEATH MATCH / 1 VS 1</span><b id="enemy-lives">상대 목숨 3</b><button id="return-lobby">로비로</button><button id="audio-toggle" aria-pressed="false">소리 켬</button></div>
+<section id="battle-score" class="battle-score" data-team="0" aria-label="내 킬, 내 목숨, 제한시간, 상대 목숨, 상대 킬">
+ <b id="own-kills" class="score-own score-kills" title="내 킬" aria-label="내 킬 0">0</b>
+ <b id="own-lives" class="score-own score-lives" title="내 남은 목숨" aria-label="내 남은 목숨 3">3</b>
+ <time id="match-timer" title="남은 전투 시간" aria-label="남은 전투 시간 10분">10:00</time>
+ <b id="opponent-lives" class="score-opponent score-lives" title="상대 남은 목숨" aria-label="상대 남은 목숨 3">3</b>
+ <b id="opponent-kills" class="score-opponent score-kills" title="상대 킬" aria-label="상대 킬 0">0</b>
+</section>
+<section id="pause-menu" class="battle-menu" role="dialog" aria-modal="true" aria-labelledby="pause-title" tabindex="-1" hidden>
+ <div class="battle-menu-panel"><span class="eyebrow">DEATH MATCH / MENU</span><h2 id="pause-title">전투 메뉴</h2>
+  <div class="battle-menu-profile"><strong id="battle-name">OPERATOR</strong><span id="battle-coins" class="coin-balance">◉ 300</span><small id="battle-mode">PVP / 1 VS 1</small></div>
+  <button id="resume-game">전투로</button><button id="audio-toggle" aria-pressed="false">소리 켬</button><button id="return-lobby">로비로</button>
+  <p>내 조작만 멈춥니다.<br>상대방과 AI, 제한시간은 계속 진행됩니다.</p>
+ </div>
+</section>
 <div id="match-notice" role="status"></div><div id="hit-marker" hidden>×</div>
 <div id="battle-chat-anchor"></div><div class="fps-radar"><span id="minimap-player-label">내 위치 · BLUE</span><canvas aria-label="맵과 내 위치만 표시" id="minimap" width="192" height="128"></canvas></div>
 <div class="fps-health"><span>HP <b id="hp-text">100</b></span><div class="health-track"><div id="hp-fill"></div></div><small id="grenade-count">수류탄 2</small><small id="stance-status">서 있음 · C 웅크리기</small></div>
 <div class="fps-ammo"><span id="equipped-name">AR-01 라이플</span><div><strong id="ammo-current">30</strong><span id="ammo-max"> / 30</span></div><small id="reload-status">R 재장전 · 예비탄 ∞</small></div>
-<div id="weapon-strip"></div><p class="fps-controls">WASD 이동 · 마우스 조준 · 터치패드 탭/클릭 발사 · 누르면 연사 · SPACE 점프 · C 웅크리기/일어서기 · F 사다리 · W 문 열기 · SHIFT 꾹 조준(총기) · W 두 번 달리기 · R 장전 · 1/2/3·휠 무기 · V 근접 · G 수류탄 · ESC 마우스 해제</p>
+<div id="weapon-strip"></div><p class="fps-controls">WASD 이동 · 마우스 조준 · 터치패드 탭/클릭 발사 · 누르면 연사 · SPACE 점프 · C 웅크리기/일어서기 · F 사다리 · W 문 열기 · SHIFT 꾹 조준(총기) · W 두 번 달리기 · R 장전 · 1/2/3·휠 무기 · V 근접 · G 수류탄 · ESC 메뉴</p>
 <div id="capture-overlay"><h2 id="capture-title">전투 준비 완료</h2><p id="capture-help">화면을 클릭하면 마우스 조준이 활성화됩니다.</p><button id="capture-mouse">클릭하여 전투 시작</button><button id="fallback-mouse" class="quiet" hidden>드래그 조작으로 플레이</button></div>
-<div id="death-overlay" hidden><h2 id="death-title">다운</h2><p id="death-text">리스폰 준비 중</p><section id="respawn-shop" hidden aria-label="부활 대기 보급 메뉴"><p>보급품 선택 · 각 50코인 <b id="shop-coins">◉ 300</b></p><div><button id="buy-damage"><strong>강화탄 · 50 <kbd>1</kbd></strong><small>다음 목숨 총 피해 +5%</small></button><button id="buy-shield"><strong>HP UP · 50 <kbd>2</kbd></strong><small>다음 목숨 보호막 +20</small></button><button id="buy-reveal"><strong>투시경 · 50 <kbd>3</kbd></strong><small>부활 후 8초 상대 투시</small></button></div><small>확인 없이 자동 부활 · 기본 HP 100 · 1/2/3 보급품 선택 · Esc 마우스 해제</small><span id="shop-status" role="status"></span></section></div>
-<div id="touch-controls"><div id="joystick"><i></i></div><div class="touch-actions"><button id="touch-fire">발사</button><button id="touch-jump">점프</button><button id="touch-crouch" aria-pressed="false">웅크리기</button><button id="touch-interact">F 사다리</button><button id="touch-reload">장전</button><button id="touch-scope">꾹 조준</button><button id="touch-melee">V 근접</button><button id="touch-grenade">G 투척</button></div></div>
+<div id="death-overlay" hidden><h2 id="death-title">다운</h2><p id="death-text">리스폰 준비 중</p><section id="respawn-shop" hidden aria-label="부활 대기 보급 메뉴"><p>보급품 선택 · 각 50코인 <b id="shop-coins">◉ 300</b></p><div><button id="buy-damage"><strong>강화탄 · 50 <kbd>1</kbd></strong><small>다음 목숨 총 피해 +5%</small></button><button id="buy-shield"><strong>HP UP · 50 <kbd>2</kbd></strong><small>다음 목숨 보호막 +20</small></button><button id="buy-reveal"><strong>투시경 · 50 <kbd>3</kbd></strong><small>부활 후 8초 상대 투시</small></button></div><small>확인 없이 자동 부활 · 기본 HP 100 · 1/2/3 보급품 선택 · ESC 메뉴</small><span id="shop-status" role="status"></span></section></div>
+<div id="touch-controls"><div id="joystick"><i></i></div><div class="touch-actions"><button id="touch-fire">발사</button><button id="touch-jump">점프</button><button id="touch-crouch" aria-pressed="false">웅크리기</button><button id="touch-interact">F 사다리</button><button id="touch-reload">장전</button><button id="touch-scope">꾹 조준</button><button id="touch-melee">V 근접</button><button id="touch-grenade">G 투척</button><button id="touch-menu">메뉴</button></div></div>
 </main>
 <section id="results-screen" class="flow-screen results-screen" hidden aria-labelledby="result-title">
  <article class="results-panel">

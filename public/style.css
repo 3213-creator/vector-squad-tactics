@@ -71,3 +71,18 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 #battle-main.ending>:not(#viewport):not(#match-notice){visibility:hidden;pointer-events:none}
 
 #touch-crouch[aria-pressed="true"]{color:#d0fc72;border-color:#d0fc72;background:#31452bcc}
+
+/* Five numbers are the only persistent combat header. Blue/red follow the player's slot. */
+.battle-score{--own:#75ceff;--other:#ff8b79;position:absolute;z-index:7;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:grid;grid-template-columns:.8fr 1fr 1.55fr 1fr .8fr;width:min(510px,90vw);height:64px;pointer-events:none;filter:drop-shadow(0 3px 6px #0008);font-family:Impact,'Arial Narrow',system-ui,sans-serif;font-variant-numeric:tabular-nums;text-align:center}
+.battle-score[data-team="1"]{--own:#ff8b79;--other:#75ceff}
+.battle-score>b,.battle-score>time{display:grid;place-items:center;margin:0;background:#101c26cc;border-bottom:3px solid currentColor;line-height:1;font-weight:800}
+.battle-score .score-own{color:var(--own);background:linear-gradient(#132530d9,#183e54d9)}.battle-score .score-opponent{color:var(--other);background:linear-gradient(#2d2021d9,#532a2cd9)}
+.battle-score[data-team="1"] .score-own{background:linear-gradient(#2d2021d9,#532a2cd9)}.battle-score[data-team="1"] .score-opponent{background:linear-gradient(#132530d9,#183e54d9)}
+.battle-score .score-kills{font-size:29px}.battle-score .score-lives{font-size:42px}.battle-score>time{font-size:30px;color:#f3ebd2;letter-spacing:1px;background:#121c23e8;border-color:#b4ab8b}.battle-score>time[data-urgent="true"]{color:#ffba83;border-color:#ffad71}
+.battle-menu{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:20px;background:#071018a6;backdrop-filter:blur(4px);overflow:auto;touch-action:auto}
+.battle-menu-panel{width:min(380px,100%);margin:auto;padding:28px;border:3px ridge #748385;background:linear-gradient(145deg,#1c2c32f7,#0b151cf7);box-shadow:0 18px 70px #0009;text-align:center;color:#e6eddf}
+.battle-menu-panel h2{margin:10px 0 18px;font-size:28px;letter-spacing:3px}.battle-menu-profile{padding:12px;margin:0 0 20px;border-block:1px solid #60747b66}.battle-menu-profile strong{display:block;font-size:16px}.battle-menu-profile small{font-size:10px;letter-spacing:1px;color:#a7bac0}
+.battle-menu-panel button{display:block;width:100%;min-height:48px;margin:10px 0;border:1px solid #81918d;background:#243940;color:#eef4e2;font-size:15px}.battle-menu-panel #resume-game{background:#c4d69c;color:#172417;border-color:#e0edba}.battle-menu-panel #return-lobby{border-color:#967269;color:#ffcabb;background:#412d2c}.battle-menu-panel button:hover:enabled,.battle-menu-panel button:focus-visible{outline:2px solid #e5e6bf;outline-offset:3px}.battle-menu-panel #audio-toggle[aria-pressed="true"]{color:#f6bd9b}.battle-menu-panel p{margin:19px 0 0;font-size:11px;line-height:1.7;color:#b6c8ce}
+#battle-main.menu-open #capture-overlay{visibility:hidden;pointer-events:none}#touch-menu{grid-column:1/-1;min-height:36px}
+.results-screen[data-outcome="draw"]{--result-accent:#b9dce5;--result-glow:#508c9f30}
+@media(max-width:600px){.battle-score{height:52px;width:min(440px,92vw);top:max(8px,env(safe-area-inset-top))}.battle-score .score-kills{font-size:24px}.battle-score .score-lives{font-size:34px}.battle-score>time{font-size:24px}.battle-menu-panel{padding:20px}.battle-menu-panel h2{font-size:24px}}

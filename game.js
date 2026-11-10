@@ -5,11 +5,19 @@ import {weapons,isPrimary,isSidearm,canAim} from './weapons.js';
 export {weapons} from './weapons.js';
 export function spawnPoint(id){return {x:id?7.5:-7.5,y:.15,z:.5,yaw:id?Math.PI/2:-Math.PI/2,pitch:0};}
 function body(id){return {id,...spawnPoint(id),vx:0,vy:0,vz:0,grounded:false,ladder:null,crouching:false,hp:100,lives:3,diedAt:0,weapon:'rifle',primary:'rifle',secondary:'pistol',ammo:Object.fromEntries(Object.entries(weapons).filter(([,w])=>w.mag!==null).map(([key,w])=>[key,w.mag])),reserve:Object.fromEntries(Object.entries(weapons).filter(([,w])=>w.mag!==null).map(([key,w])=>[key,w.mag*3])),grenades:2,throwAt:0,throwUntil:0,lastShot:0,nextShotAt:0,stepDistance:0,lastMelee:0,reloadUntil:0,respawnAt:0,shieldUntil:0,coins:300,armor:0,damageBoost:1,thermalUntil:0,pendingUpgrades:{damage:false,shield:false,reveal:false},ack:0,shots:0};}
-export function initial(mode='pvp'){return {phase:'lobby',mode,players:[null,null],winner:null,scores:[{kills:0,deaths:0},{kills:0,deaths:0}],resultsConfirmed:[false,false],resultsAt:0,introReady:[false,false],introStartedAt:0,battleStartsAt:0,units:[body(0),body(1)],grenades:[],crates:[],doors:doorTemplates.map(d=>({...d,open:false})),impacts:[],impactSeq:0,events:[],clock:0,lastEvent:'1 대 1 FPS 준비'};}
+export const MATCH_DURATION_MS=10*60*1000;
+export function initial(mode='pvp'){return {phase:'lobby',mode,players:[null,null],winner:null,scores:[{kills:0,deaths:0},{kills:0,deaths:0}],resultsConfirmed:[false,false],resultsAt:0,introReady:[false,false],introStartedAt:0,battleStartsAt:0,matchEndsAt:0,units:[body(0),body(1)],grenades:[],crates:[],doors:doorTemplates.map(d=>({...d,open:false})),impacts:[],impactSeq:0,events:[],clock:0,lastEvent:'1 대 1 FPS 준비'};}
 export function returnToLobby(old){const next=initial(old.mode);next.players=old.players.map(p=>p?{...p,ready:!!p.isBot}:null);next.units.forEach((u,i)=>{u.weapon=old.units[i].weapon;u.primary=old.units[i].primary;u.secondary=old.units[i].secondary;});return next;}
 function event(s,type,data={}){s.events.push({id:++s.clock,type,...data});if(s.events.length>16)s.events.shift();}
+function finishMatch(s,winner,now){
+ s.winner=winner;s.phase='ending';s.resultsAt=now+3000;s.resultsConfirmed=s.players.map(p=>!!p?.isBot);
+ for(const p of s.players)if(p)p.ready=!!p.isBot;
+ for(const u of s.units){u.vx=u.vy=u.vz=0;u.reloadUntil=0;u.throwAt=u.throwUntil=0;u.scoped=false;}
+ event(s,winner==='draw'?'draw':'victory',{actor:winner});
+}
 export function action(s,id,a,now=Date.now()){
  setDoors(s.doors);const u=s.units[id],player=s.players[id];if(!player)throw Error('먼저 방에 참가하세요.');if(s.phase==='results'||s.phase==='ending')return;
+ if(s.phase==='battle'&&s.matchEndsAt&&now>=s.matchEndsAt){finishMatch(s,'draw',now);return;}
  if(a.type==='introReady'){
   if(s.phase!=='intro'||now-s.introStartedAt<5000)return;
   s.introReady[id]=true;
@@ -43,12 +51,7 @@ export function hurt(s,target,damage,attacker,now){
   if(attacker!==target.id&&s.scores[attacker])s.scores[attacker].kills++;
   target.lives--;target.diedAt=now;target.reloadUntil=0;target.throwAt=target.throwUntil=0;
   target.respawnAt=target.lives>0?now+5000:0;event(s,'death',{actor:attacker,target:target.id});
-  if(target.lives===0){
-   s.winner=1-target.id;s.phase='ending';s.resultsAt=now+3000;s.resultsConfirmed=s.players.map(p=>!!p?.isBot);
-   for(const p of s.players)if(p)p.ready=!!p.isBot;
-   for(const unit of s.units){unit.vx=unit.vy=unit.vz=0;unit.reloadUntil=0;unit.throwAt=unit.throwUntil=0;unit.scoped=false;}
-   event(s,'victory',{actor:s.winner});
-  }
+  if(target.lives===0)finishMatch(s,1-target.id,now);
  }
 }
 function strike(s,u,damage,range,now,melee=false,headDamage=damage){const origin=melee?new Vector3(u.x,u.y+eyeHeight(u),u.z):shotOrigin(u),direction=melee?look(u.yaw,u.pitch):shotDirection(u,s.units),ray=new Ray(origin,direction),v=s.units[1-u.id];
@@ -61,8 +64,9 @@ function strike(s,u,damage,range,now,melee=false,headDamage=damage){const origin
 }
 export function tick(s,inputs,now=Date.now(),dt=STEP){
  if(s.phase==='ending'){if(now>=s.resultsAt){s.phase='results';event(s,'results');}return;}
- if(s.phase==='countdown'&&now>=s.battleStartsAt){s.phase='battle';s.units.forEach(u=>{u.shieldUntil=now+3000;});event(s,'start');return;}
+ if(s.phase==='countdown'&&now>=s.battleStartsAt){s.phase='battle';s.matchEndsAt=now+MATCH_DURATION_MS;s.units.forEach(u=>{u.shieldUntil=now+3000;});event(s,'start');return;}
  if(s.phase!=='battle'||s.winner!==null)return;
+ if(s.matchEndsAt&&now>=s.matchEndsAt){finishMatch(s,'draw',now);return;}
  for(const u of s.units){if(s.winner!==null)return;if(u.hp<=0){if(u.respawnAt&&now>=u.respawnAt){const lives=u.lives,weapon=u.weapon,primary=u.primary,secondary=u.secondary,ack=u.ack,coins=u.coins,upgrades=u.pendingUpgrades;Object.assign(u,body(u.id),{lives,weapon,primary,secondary,ack,coins,damageBoost:upgrades.damage?1.05:1,armor:upgrades.shield?20:0,thermalUntil:upgrades.reveal?now+8000:0,shieldUntil:now+3000});event(s,'respawn',{target:u.id});}continue;}
  const input=inputs[u.id]||{};setCrates(s.crates);setDoors(s.doors);const oldX=u.x,oldZ=u.z;moveBody(u,input,dt);if(u.grounded&&u.ladder===null){u.stepDistance+=Math.hypot(u.x-oldX,u.z-oldZ);if(u.stepDistance>(input.sprint?1.7:1.35)){u.stepDistance=0;event(s,'footstep',{actor:u.id,x:u.x,y:u.y+.12,z:u.z});}}u.scoped=!!input.scoped&&canAim(u.weapon)&&!u.reloadUntil&&!u.throwUntil&&u.ladder===null;if(Number.isInteger(input.seq))u.ack=input.seq;if(u.y< -5){hurt(s,u,1000,u.id,now);continue;}
  if(u.throwAt&&now>=u.throwAt){const d=look(u.yaw,u.pitch);s.grenades.push({id:++s.clock,owner:u.id,x:u.x+d.x*.5,y:u.y+eyeHeight(u),z:u.z+d.z*.5,vx:d.x*18,vy:d.y*18+5,vz:d.z*18,explodeAt:now+2200});u.throwAt=0;event(s,'grenadeThrow',{actor:u.id,x:u.x,y:u.y+eyeHeight(u),z:u.z});}if(u.throwUntil&&now>=u.throwUntil)u.throwUntil=0;

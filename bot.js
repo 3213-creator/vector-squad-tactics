@@ -1,6 +1,6 @@
 import {Vector3,Ray} from 'three';
 import {Capsule} from 'three/addons/math/Capsule.js';
-import {STEP,EYE,look,shotOrigin,setDoors,setCrates,raycastWorld} from './physics.js';
+import {STEP,eyeHeight,bodyHeight,look,shotOrigin,setDoors,setCrates,raycastWorld} from './physics.js';
 import {action} from './game.js';
 const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
 const approach=(from,to,amount)=>from+Math.max(-amount,Math.min(amount,wrap(to-from)));
@@ -19,14 +19,14 @@ export function createBrain(random=Math.random){return {random,route:[],thinkAt:
 function blocked(node,crates){return crates.some(c=>!c.broken&&Math.abs(node.x-c.x)<.76&&Math.abs(node.z-c.z)<.76);}
 function nearest(nodes,x,z,crates){let best=null,distance=Infinity;for(const n of nodes){const d=(x-n.x)**2+(z-n.z)**2;if(d<distance&&!blocked(n,crates)){best=n;distance=d;}}return best;}
 function routeTo(nodes,start,end,crates){if(!start||!end)return [];const queue=[start.id],parent=new Map([[start.id,null]]);for(let i=0;i<queue.length;i++){const id=queue[i];if(id===end.id)break;for(const other of nodes[id].neighbors){if(parent.has(other)||blocked(nodes[other],crates))continue;parent.set(other,id);queue.push(other);}}if(!parent.has(end.id))return [];const route=[];for(let id=end.id;id!==start.id;id=parent.get(id))route.unshift(nodes[id]);return route;}
-function sees(s,bot,target){if(target.hp<=0)return false;const origin=new Vector3(bot.x,bot.y+EYE,bot.z),delta=new Vector3(target.x,target.y+1,target.z).sub(origin),distance=delta.length();if(distance>20||distance<.001)return false;const direction=delta.clone().normalize();if(direction.dot(look(bot.yaw,bot.pitch))<.35)return false;const hit=raycastWorld(new Ray(origin,direction));return !hit||hit.distance>distance-.3;}
+function sees(s,bot,target){if(target.hp<=0)return false;const origin=new Vector3(bot.x,bot.y+eyeHeight(bot),bot.z),delta=new Vector3(target.x,target.y+bodyHeight(target)*.57,target.z).sub(origin),distance=delta.length();if(distance>20||distance<.001)return false;const direction=delta.clone().normalize();if(direction.dot(look(bot.yaw,bot.pitch))<.35)return false;const hit=raycastWorld(new Ray(origin,direction));return !hit||hit.distance>distance-.3;}
 export function botInput(s,brain,navigation,now=Date.now()){
  const bot=s.units[1],target=s.units[0];setDoors(s.doors);setCrates(s.crates);
  if(bot.hp<=0||s.winner!==null)return {yaw:bot.yaw,pitch:bot.pitch};
  if(bot.ammo[bot.weapon]===0&&!bot.reloadUntil){if(bot.reserve[bot.weapon]>0)action(s,1,{type:'reload'},now);else if(bot.weapon!=='pistol'&&bot.ammo.pistol+bot.reserve.pistol>0)action(s,1,{type:'equip',weapon:'pistol'},now);}
  if(now>=brain.thinkAt){
  brain.thinkAt=now+120;const visible=sees(s,bot,target);if(visible){if(!brain.visible)brain.noticeAt=now+450;brain.lastSeen={x:target.x,y:target.y,z:target.z};brain.seenAt=now;}brain.visible=visible;
- if(visible){const origin=shotOrigin(bot),delta=new Vector3(target.x,target.y+1,target.z).sub(origin);brain.aimYaw=Math.atan2(-delta.x,-delta.z)+Math.sin(now*.0021)*.035;brain.aimPitch=Math.atan2(delta.y,Math.hypot(delta.x,delta.z))+Math.sin(now*.0017)*.018;const d=delta.length();brain.forward=d<3?-.25:0;brain.strafe=Math.sin(now*.0015)>.2?.28:-.28;}
+ if(visible){const origin=shotOrigin(bot),delta=new Vector3(target.x,target.y+bodyHeight(target)*.57,target.z).sub(origin);brain.aimYaw=Math.atan2(-delta.x,-delta.z)+Math.sin(now*.0021)*.035;brain.aimPitch=Math.atan2(delta.y,Math.hypot(delta.x,delta.z))+Math.sin(now*.0017)*.018;const d=delta.length();brain.forward=d<3?-.25:0;brain.strafe=Math.sin(now*.0015)>.2?.28:-.28;}
  else{
  const distanceMoved=brain.lastPosition?Math.hypot(bot.x-brain.lastPosition.x,bot.z-brain.lastPosition.z):1;if(distanceMoved<.035&&brain.forward>0){if(!brain.stuckAt)brain.stuckAt=now;}else brain.stuckAt=0;brain.lastPosition={x:bot.x,z:bot.z};
  while(brain.route.length&&Math.hypot(bot.x-brain.route[0].x,bot.z-brain.route[0].z)<.25)brain.route.shift();

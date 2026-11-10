@@ -69,3 +69,5 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 
 /* Keep the final scene visible for three seconds before showing the match report. */
 #battle-main.ending>:not(#viewport):not(#match-notice){visibility:hidden;pointer-events:none}
+
+#touch-crouch[aria-pressed="true"]{color:#d0fc72;border-color:#d0fc72;background:#31452bcc}

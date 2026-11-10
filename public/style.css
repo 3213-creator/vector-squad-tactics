@@ -90,3 +90,15 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 /* Confirm real damage at the fixed aim point, including while aiming through a scope. */
 .combat-marker{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;display:grid;place-items:center;font:800 44px/1 monospace;z-index:13;pointer-events:none;user-select:none;text-shadow:0 1px 4px #000,0 0 8px currentColor}
 #hit-marker{color:#ffe49d;z-index:14}
+
+/* First choose a match format, then open the existing two 1vs1 modes. */
+.mode-selector{width:360px;max-width:calc(100% - 40px)}
+.mode-selector>.mode-selector-heading{position:relative;justify-content:center;align-items:center;min-height:22px;margin:0}
+.mode-selector-heading>span{font-size:9px;letter-spacing:3px;color:#b9cbd3}
+.mode-selector #mode-back{position:absolute;left:0;top:50%;transform:translateY(-50%);flex:none;width:28px;min-height:26px;padding:0;font-size:17px;background:transparent;border-color:#53656d}
+#mode-formats button{min-width:0;min-height:44px;padding:9px 5px;font-size:12px;white-space:nowrap}
+#mode-formats #mode-1v1{border-color:#bddc89;color:#e1efbd}
+#mode-formats button:disabled{opacity:.45;cursor:default}
+#duel-mode-options button{min-height:44px}
+@media(min-width:601px) and (max-width:850px){.mode-selector{max-width:calc(100% - 340px)}#mode-formats button{font-size:10px;padding:9px 4px}}
+@media(max-width:600px){.mode-selector{width:auto;max-width:calc(100% - 40px)}#mode-formats button{font-size:11px}}

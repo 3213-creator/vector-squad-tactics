@@ -15,6 +15,7 @@ const elements=new Map(),$=id=>{if(!elements.has(id))elements.set(id,document.ge
 function setHUDText(id,value){const el=$(id),text=String(value);if(el.textContent!==text)el.textContent=text;}
 let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
 let screen='title',connecting=false,connectionNotice='',roomsRequest=0,serverClockOffset=0,resultReturnPending=false;
+let duelModesOpen=false;
 let battleMenuOpen=false,menuOpenedAt=0,deliberatePointerUnlock=false,pointerWasLocked=false;
 function remoteNow(){return Date.now()+serverClockOffset;}
 // Menu/lobby themes loop; the ten-second battle intro and final result themes play once.
@@ -107,6 +108,7 @@ $('close-weapon-picker').onclick=()=>$('weapon-picker').close();$('weapon-picker
 function displayLobby(){
  const previousScreen=screen,connected=team!==null&&!!state.players[team],waitingForResult=connected&&state.phase==='results'&&!!state.resultsConfirmed?.[team];
  if(connected)screen=state.phase==='results'&&!waitingForResult?'results':['intro','countdown','battle','ending'].includes(state.phase)?'battle':'lobby';else if(['lobby','battle','results'].includes(screen))screen='menu';
+ if(screen==='lobby'&&previousScreen!=='lobby')duelModesOpen=false;
  syncBackgroundMusic();if(screen!=='lobby')finishLobbyTurn();entered=screen!=='title';const battle=screen==='battle';document.body.dataset.screen=screen;
  for(const [id,value]of [['title-screen','title'],['menu-screen','menu'],['rooms-screen','rooms'],['private-screen','private'],['lobby','lobby'],['battle-main','battle'],['results-screen','results']])$(id).hidden=screen!==value;
  document.querySelector('header').hidden=screen!=='lobby';document.querySelector('footer').hidden=true;$('chat-panel').hidden=screen!=='lobby'&&!battle;
@@ -115,7 +117,7 @@ function displayLobby(){
  for(const id of ['browser-create','open-public','open-private','menu-ai','menu-back','rooms-back','private-back','refresh-rooms'])$(id).disabled=connecting;
  $('room-player-name').disabled=connecting;$('code-join').querySelector('button').disabled=connecting;$('private-room-code').disabled=connecting;
  const me=team===null?null:state.players[team],other=team===null?null:state.players[1-team];$('lobby-coins').textContent=`◉ ${team===null?300:state.units[team].coins}`;$('display-name').textContent=me?.name||profileName||'이름을 설정하세요';$('own-label').textContent=me?.name||profileName||'나의 오퍼레이터';$('own-ready').textContent=me?.ready?'READY / 준비 완료':me?'대기 중':'접속 전';$('opponent-label').hidden=!other;$('enemy-name').textContent=other?.name||'';$('enemy-ready').textContent=other?.ready?'READY / 준비 완료':'입장 · 준비 중';$('lobby').classList.toggle('has-opponent',!!other);
- const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;for(const value of ['ai','pvp']){const b=$('mode-'+value);b.setAttribute('aria-pressed',String(mode===value));b.disabled=waitingForResult||!!me&&(team!==0||(value==='ai'&&humans>1));}$('mode-hint').textContent=humans>1?'두 명 접속 · PVP 대전':mode==='ai'?'혼자 플레이 · 순찰/교전 AI':'같은 방 코드로 친구를 초대하세요';$('launch-help').textContent=waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
+ const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;renderModeSelector(mode,humans,me,waitingForResult);$('launch-help').textContent=waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
  $('lobby-status').textContent=waitingForResult?'상대가 전투 결과를 확인하고 있습니다. 잠시 기다려 주세요.':!assetsReady?'맵과 캐릭터를 불러오는 중입니다.':startPending?'AI 전투에 접속하는 중입니다…':!me?(mode==='ai'?'게임 시작을 누르면 AI 훈련에 바로 접속합니다.':'이름을 저장한 뒤 같은 방으로 접속하세요.'):!other?'상대 접속을 기다리는 중입니다.':other.isBot?'AI 준비 완료 · 게임 시작을 눌러 주세요.':me.ready?'상대의 준비를 기다리는 중입니다.':`${other.name} 님이 입장했습니다. 시작을 눌러 주세요.`;
  $('start-game').disabled=waitingForResult||!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${waitingForResult?'상대 확인 대기':startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').disabled=connecting;
  if(waitingForResult){$('own-ready').textContent='로비 대기 중';$('enemy-ready').textContent='전투 결과 확인 중';}$('edit-name').disabled=waitingForResult;
@@ -142,6 +144,22 @@ function connectRoom(autoStart=false,options={}){
  current.onclose=()=>{if(current!==socket)return;connecting=false;startPending=false;finishLobbyTurn();lobbyRotationOffsets.clear();lobbyRevision='';team=null;state=initial();pending=[];resultReturnPending=false;$('profile-form').hidden=true;$('connection').textContent='● OFFLINE';displayLobby();setNavigationStatus(connectionNotice);};
  current.onerror=()=>{connectionNotice='서버에 연결할 수 없습니다. 잠시 후 다시 참가하세요.';setNavigationStatus(connectionNotice);};
 }
+function renderModeSelector(mode,humans,me,waitingForResult){
+ $('mode-formats').hidden=duelModesOpen;$('duel-mode-options').hidden=!duelModesOpen;$('mode-back').hidden=!duelModesOpen;
+ $('mode-1v1').setAttribute('aria-expanded',String(duelModesOpen));setHUDText('mode-heading',duelModesOpen?'1vs1':'GAME MODE');
+ for(const value of ['ai','pvp']){
+  const button=$('mode-'+value);button.setAttribute('aria-pressed',String(mode===value));
+  button.disabled=waitingForResult||!!me&&(team!==0||(value==='ai'&&humans>1));
+ }
+ setHUDText('mode-hint',!duelModesOpen?'1vs1을 눌러 전투 방식을 선택하세요.':humans>1?'두 명 접속 · PVP 대전':mode==='ai'?'혼자 플레이 · 순찰/교전 AI':'같은 방 코드로 친구를 초대하세요');
+}
+function showDuelOptions(open){
+ duelModesOpen=open;displayLobby();
+ const selected=$('mode-'+(team===null?chosenMode:state.mode));
+ (open?(selected.disabled?$('mode-back'):selected):$('mode-1v1')).focus({preventScroll:true});
+}
+$('mode-1v1').onclick=()=>showDuelOptions(true);$('mode-back').onclick=()=>showDuelOptions(false);
+// Team format buttons are placeholders; they have no action or server mode assignment.
 for(const mode of ['ai','pvp'])$('mode-'+mode).onclick=()=>{if(team===null){chosenMode=mode;displayLobby();}else send({type:'mode',mode});};
 $('return-lobby').onclick=()=>send({type:'leaveMatch'});
 function launchGame(){if(!assetsReady||startPending||state.phase==='results')return;if(team!==null){send({type:'ready'});return;}if(chosenMode!=='ai')return;if(!profileName){startPending=true;$('profile-form').hidden=false;$('player-name').focus();return;}$('room').value='AI_'+crypto.randomUUID().replaceAll('-','').slice(0,18);connectRoom(true,{private:true,createOnly:true});}

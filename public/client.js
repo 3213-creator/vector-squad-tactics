@@ -16,7 +16,8 @@ function setHUDText(id,value){const el=$(id),text=String(value);if(el.textConten
 let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
 let screen='title',connecting=false,connectionNotice='',roomsRequest=0,serverClockOffset=0,resultReturnPending=false;
 let duelModesOpen=false;
-const network={ready:false,intentional:false,reconnecting:false,failed:false,restorePending:false,session:null,retryTimer:0,attemptTimer:0,startedAt:0,attempts:0,lastMessageAt:0,peerOffline:false};
+const network={ready:false,intentional:false,reconnecting:false,failed:false,restorePending:false,session:null,retryTimer:0,attemptTimer:0,startedAt:0,attempts:0,lastMessageAt:0,peerOffline:false,roomLocked:false,joinOrigin:'menu',passwordPrompt:null};
+let passwordSavePending=false,roomPasswordNotice='',roomPasswordTarget=null;
 let lastInputSentAt=-Infinity,fireQueued=false;
 let battleMenuOpen=false,menuOpenedAt=0,deliberatePointerUnlock=false,pointerWasLocked=false;
 function remoteNow(){return Date.now()+serverClockOffset;}
@@ -117,7 +118,8 @@ function displayLobby(){
  const chatAnchor=$(battle?'battle-chat-anchor':'lobby-chat-anchor');if($('chat-panel').parentElement!==chatAnchor)chatAnchor.append($('chat-panel'));
  if(screen==='lobby'||battle){const parent=$(battle?'viewport':'lobby-viewport');if(renderer.domElement.parentElement!==parent){parent.append(renderer.domElement);requestAnimationFrame(resize);}}
  for(const id of ['browser-create','open-public','open-private','menu-ai','menu-back','rooms-back','private-back','refresh-rooms'])$(id).disabled=connecting;
- $('room-player-name').disabled=connecting;$('code-join').querySelector('button').disabled=connecting;$('private-room-code').disabled=connecting;
+ $('room-player-name').disabled=connecting;$('code-join').querySelector('button').disabled=connecting;$('private-room-code').disabled=connecting;$('private-room-password').disabled=connecting;
+ $('join-room-password').disabled=connecting;$('room-join-submit').disabled=connecting;$('close-room-join').disabled=connecting;renderRoomAccess();
  const me=team===null?null:state.players[team],other=team===null?null:state.players[1-team];$('lobby-coins').textContent=`◉ ${team===null?300:state.units[team].coins}`;$('display-name').textContent=me?.name||profileName||'이름을 설정하세요';$('own-label').textContent=me?.name||profileName||'나의 오퍼레이터';$('own-ready').textContent=me?.ready?'READY / 준비 완료':me?'대기 중':'접속 전';$('opponent-label').hidden=!other;$('enemy-name').textContent=other?.name||'';$('enemy-ready').textContent=other?.ready?'READY / 준비 완료':'입장 · 준비 중';$('lobby').classList.toggle('has-opponent',!!other);
  const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;renderModeSelector(mode,humans,me,waitingForResult);$('launch-help').textContent=waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
  $('lobby-status').textContent=waitingForResult?'상대가 전투 결과를 확인하고 있습니다. 잠시 기다려 주세요.':!assetsReady?'맵과 캐릭터를 불러오는 중입니다.':startPending?'AI 전투에 접속하는 중입니다…':!me?(mode==='ai'?'게임 시작을 누르면 AI 훈련에 바로 접속합니다.':'이름을 저장한 뒤 같은 방으로 접속하세요.'):!other?'상대 접속을 기다리는 중입니다.':other.isBot?'AI 준비 완료 · 게임 시작을 눌러 주세요.':me.ready?'상대의 준비를 기다리는 중입니다.':`${other.name} 님이 입장했습니다. 시작을 눌러 주세요.`;
@@ -180,7 +182,7 @@ function restoreSessionAfterReload(){
 function leaveRoomConnection(){
  if(team!==null&&state.players[team]){chosen=state.units[team].primary;chosenSecondary=state.units[team].secondary;}
  if(network.ready)send({type:'leaveRoom'});
- network.intentional=true;network.ready=false;network.reconnecting=false;network.failed=false;network.session=null;network.peerOffline=false;network.restorePending=false;clearConnectionTimers();saveConnectionSession();
+ network.intentional=true;network.ready=false;network.reconnecting=false;network.failed=false;network.session=null;network.peerOffline=false;network.restorePending=false;network.roomLocked=false;network.passwordPrompt=null;passwordSavePending=false;roomPasswordNotice='';$('room-password').value='';clearConnectionTimers();saveConnectionSession();
  const previous=socket;socket=null;previous?.close();connecting=false;startPending=false;connectionNotice='';team=null;state=initial();pending=[];resultReturnPending=false;lobbyRotationOffsets.clear();lobbyRevision='';
  $('connection-overlay').hidden=true;$('peer-connection-notice').hidden=true;$('profile-form').hidden=true;$('chat-messages').replaceChildren();$('connection').textContent='● OFFLINE';screen='menu';displayLobby();setNavigationStatus('');
 }
@@ -189,7 +191,7 @@ function openGameSocket(request){
  clearTimeout(network.attemptTimer);network.lastMessageAt=Date.now();
  socket=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}`);const current=socket;
  if(request.type==='resume'){network.attempts++;setHUDText('connection-detail',`같은 방으로 재연결 중 · ${network.attempts}회 시도`);}
- network.attemptTimer=setTimeout(()=>{if(current===socket&&!network.ready){socket=null;current.close();if(network.session)scheduleReconnect();else{connecting=false;startPending=false;displayLobby();setNavigationStatus('서버 연결 시간이 초과되었습니다. 다시 참가해 주세요.');}}},request.type==='resume'?10000:30000);
+ network.attemptTimer=setTimeout(()=>{if(current===socket&&!network.ready){socket=null;current.close();if(network.session)scheduleReconnect();else{connecting=false;startPending=false;displayLobby();setNavigationStatus('서버 연결 시간이 초과되었습니다. 다시 참가해 주세요.');if($('room-join-dialog').open)setHUDText('room-join-status','연결 시간이 초과되었습니다. 다시 참가해 주세요.');}}},request.type==='resume'?10000:30000);
  current.onopen=()=>{if(current===socket)send(request);};
  let resumed=false;
  current.onmessage=e=>{
@@ -198,6 +200,8 @@ function openGameSocket(request){
   if(m.type==='chat')addChat(m.message);
   if(m.type==='joined'){
    resumed=!!m.resumed;if(!resumed){$('chat-messages').replaceChildren();$('chat-input').value='';}
+   delete request.password;$('private-room-password').value='';passwordSavePending=false;roomPasswordNotice='';$('room-password').value='';
+   if($('room-join-dialog').open)$('room-join-dialog').close();
    team=m.team;seq=Math.max(seq,Number(m.inputSequence)||0);$('room').value=m.room||request.room;
    network.session={token:m.sessionToken,room:m.room||request.room};saveConnectionSession();
   }
@@ -206,7 +210,7 @@ function openGameSocket(request){
    if(Number.isFinite(m.serverTime))serverClockOffset=m.serverTime-Date.now();
    if(resumed){pending=[];lastEvent=m.state.clock;seq=Math.max(seq,m.state.units[team]?.ack||0);}
    network.ready=true;network.reconnecting=false;network.failed=false;connecting=false;clearConnectionTimers();$('connection-overlay').hidden=true;$('connection').textContent='● ONLINE';
-   const other=m.state.players[1-team];network.peerOffline=!!other&&!other.isBot&&Array.isArray(m.connected)&&m.connected[1-team]===false;
+   const other=m.state.players[1-team];network.peerOffline=!!other&&!other.isBot&&Array.isArray(m.connected)&&m.connected[1-team]===false;network.roomLocked=!!m.passwordProtected;
    receive(m.state);
    if(wasReconnecting&&inBattle&&state.phase==='battle'){
     stopLocalControls();const own=state.units[team];yaw=own.yaw;pitch=own.pitch;crouchRequested=!!own.crouching;lastInputSentAt=-Infinity;
@@ -217,8 +221,13 @@ function openGameSocket(request){
   }
   if(m.type==='error'){
    connectionNotice=m.message;setNavigationStatus(m.message);$('lobby-status').textContent=m.message;$('shop-status').textContent=m.message;$('chat-status').textContent=m.message;
+   if(m.action==='roomPassword'){passwordSavePending=false;roomPasswordNotice=m.message;renderRoomAccess();}
+   if(team===null&&$('room-join-dialog').open)setHUDText('room-join-status',m.message);
+   if(team===null&&m.code?.startsWith('PASSWORD_')&&network.joinOrigin!=='private')network.passwordPrompt={room:request.room,message:m.message};
+   delete request.password;
    if(team===null){startPending=false;current.close();}
   }
+  if(m.type==='passwordUpdated'){network.roomLocked=!!m.passwordProtected;passwordSavePending=false;$('room-password').value='';roomPasswordNotice=network.roomLocked?'설정 완료 · 빈칸을 저장하면 해제됩니다.':'비밀번호가 해제되었습니다.';renderRoomAccess();}
   if(m.type==='resumeRejected'){failReconnect(m.message);current.close();}
   if(m.type==='closed'){
    if(m.code==='server_restart'&&network.session){beginReconnect();current.close();}
@@ -229,19 +238,48 @@ function openGameSocket(request){
   if(current!==socket)return;clearTimeout(network.attemptTimer);network.ready=false;
   if(network.intentional||network.failed)return;
   if(network.session){scheduleReconnect();return;}
-  connecting=false;startPending=false;$('connection').textContent='● OFFLINE';displayLobby();setNavigationStatus(connectionNotice||'서버에 연결할 수 없습니다. 잠시 후 다시 참가해 주세요.');
+  connecting=false;startPending=false;$('connection').textContent='● OFFLINE';displayLobby();setNavigationStatus(connectionNotice||'서버에 연결할 수 없습니다. 잠시 후 다시 참가해 주세요.');if($('room-join-dialog').open)setHUDText('room-join-status',connectionNotice||'서버에 연결할 수 없습니다. 다시 시도해 주세요.');
+  if(network.passwordPrompt){const prompt=network.passwordPrompt;network.passwordPrompt=null;openRoomPasswordDialog(prompt.room,'',prompt.message);}
+  else if(network.joinOrigin==='private')$('private-room-password').focus({preventScroll:true});
  };
  current.onerror=()=>{if(current===socket)connectionNotice='서버와 연결이 원활하지 않습니다. 다시 연결하고 있습니다.';};
 }
 $('press-start').onclick=()=>{if(screen!=='title')return;spatialAudio.unlock();showScreen('menu');};
 $('edit-name').onclick=()=>{$('profile-form').hidden=false;$('player-name').focus();};
 $('profile-form').onsubmit=e=>{e.preventDefault();const name=$('player-name').value.trim();if(!name||Array.from(name).length>12)return;profileName=name;$('room-player-name').value=name;try{localStorage.setItem('vector-name',name);}catch{}if(team!==null)send({type:'profile',name});$('profile-form').hidden=true;displayLobby();if(startPending){startPending=false;launchGame();}};
-function connectRoom(autoStart=false,options={}){
+function connectRoom(autoStart=false,options={},origin='menu'){
  if(!profileName||connecting||socket&&socket.readyState<2)return;
  const request={type:'join',room:$('room').value.trim(),name:profileName,weapon:chosen,primary:chosen,secondary:chosenSecondary,mode:chosenMode,...options};
- clearConnectionTimers();network.intentional=network.failed=network.reconnecting=false;network.ready=false;network.session=null;network.peerOffline=false;saveConnectionSession();
+ clearConnectionTimers();network.intentional=network.failed=network.reconnecting=false;network.ready=false;network.session=null;network.peerOffline=false;network.passwordPrompt=null;network.joinOrigin=origin;saveConnectionSession();
  connecting=true;connectionNotice='';startPending=autoStart;$('connection').textContent='● CONNECTING';setNavigationStatus('방에 접속하는 중…');displayLobby();openGameSocket(request);
 }
+function renderRoomAccess(){
+ const host=team===0&&!!state.players[0],editable=host&&state.phase==='lobby'&&network.ready&&!connecting&&!passwordSavePending;
+ $('room-password').disabled=!editable;$('save-room-password').disabled=!editable;$('save-room-password').hidden=!host;
+ $('room-password').placeholder=network.roomLocked?'설정됨':'미설정';setHUDText('save-room-password',passwordSavePending?'저장 중':'저장');
+ setHUDText('room-password-status',host?(roomPasswordNotice||(network.roomLocked?'비밀번호 설정됨 · 빈칸 저장 시 해제':'비밀번호는 1~24자 · 빈칸이면 공개 입장')):(network.roomLocked?'비밀번호가 설정된 방입니다.':'비밀번호가 없는 방입니다.'));
+}
+$('room-password-form').onsubmit=e=>{
+ e.preventDefault();if(passwordSavePending||team!==0||state.phase!=='lobby'||!network.ready)return;
+ passwordSavePending=true;roomPasswordNotice='비밀번호 저장 중…';renderRoomAccess();
+ if(!send({type:'roomPassword',password:$('room-password').value})){passwordSavePending=false;roomPasswordNotice='연결 상태를 확인한 뒤 다시 저장하세요.';renderRoomAccess();}
+};
+$('room-password').addEventListener('input',()=>{roomPasswordNotice='';});
+function openRoomPasswordDialog(room,host='',message=''){
+ if(connecting||team!==null)return;
+ if(roomPasswordTarget!==room)$('join-room-password').value='';roomPasswordTarget=room;
+ setHUDText('room-join-info',(host?host+'의 방 · ':'초대 코드 · ')+room);setHUDText('room-join-status',message);
+ if(!$('room-join-dialog').open)$('room-join-dialog').showModal();
+ $('join-room-password').focus({preventScroll:true});$('join-room-password').select();
+}
+$('close-room-join').onclick=()=>{if(!connecting)$('room-join-dialog').close();};
+$('room-join-dialog').addEventListener('cancel',e=>{if(connecting)e.preventDefault();});
+$('room-join-dialog').addEventListener('close',()=>{roomPasswordTarget=null;$('join-room-password').value='';});
+$('room-join-form').onsubmit=e=>{
+ e.preventDefault();if(connecting||team!==null||!roomPasswordTarget)return;
+ chosenMode='pvp';$('room').value=roomPasswordTarget;setHUDText('room-join-status','비밀번호 확인 중…');
+ connectRoom(false,{joinExisting:true,password:$('join-room-password').value},'password-dialog');
+};
 function renderModeSelector(mode,humans,me,waitingForResult){
  $('mode-formats').hidden=duelModesOpen;$('duel-mode-options').hidden=!duelModesOpen;$('mode-back').hidden=!duelModesOpen;
  $('mode-1v1').setAttribute('aria-expanded',String(duelModesOpen));setHUDText('mode-heading',duelModesOpen?'1vs1':'GAME MODE');
@@ -625,12 +663,12 @@ async function refreshRooms(){
  list.replaceChildren();for(const room of data.rooms){const row=document.createElement('button');row.className='room-row';row.dataset.room=room.code;row.disabled=room.count>=room.capacity||room.phase!=='lobby';
  row.classList.toggle('room-in-battle',room.phase!=='lobby');
  const badge=document.createElement('span');badge.className='room-badge';badge.setAttribute('aria-hidden','true');badge.innerHTML='<svg viewBox="0 0 40 48"><path d="M5 5L20 1l15 4v20c0 11-15 21-15 21S5 36 5 25z" fill="#273535" stroke="#b4ac7b" stroke-width="2"/><path d="M20 9l3 8 9 1-7 6 2 9-7-5-7 5 2-9-7-6 9-1z" fill="#bcb889"/></svg>';
- const label=document.createElement('span');label.className='room-description';const title=document.createElement('strong'),code=document.createElement('small');title.textContent=room.host+'의 방';code.textContent=room.code+' · '+room.mode.toUpperCase();label.append(title,code);
+ const label=document.createElement('span');label.className='room-description';const title=document.createElement('strong'),code=document.createElement('small');title.textContent=room.host+'의 방';code.textContent=room.code+' · '+room.mode.toUpperCase()+(room.locked?' · 🔒 비밀번호':'');label.append(title,code);
  const soldier=document.createElement('span');soldier.className='room-soldier';soldier.setAttribute('aria-hidden','true');soldier.innerHTML='<svg viewBox="0 0 44 54"><path d="M10 50V37l8-5h9l8 5 3 13" fill="#596363" stroke="#97a09b"/><path d="M13 23V13a10 10 0 0120 0v10l-6 10h-8z" fill="#343f41" stroke="#a2aca4"/><path d="M11 15C11 0 35 0 35 16l-4 3H14z" fill="#717b72" stroke="#b2b7a5"/><path d="M15 19h16v6H15z" fill="#111d22"/><path d="M17 37h14v14H17z" fill="#2b3737" stroke="#9ca99c"/><path d="M20 38v13m7-13v13" stroke="#6b7b70"/></svg>';
  const status=document.createElement('span');status.className='room-capacity';const count=document.createElement('b'),phase=document.createElement('small');count.textContent=room.count+'/'+room.capacity;phase.textContent=room.phase==='ending'?'전투 종료':room.phase==='intro'?'맵 정찰 중':room.phase==='countdown'?'전투 준비':room.phase==='results'?'결과 확인 중':room.phase==='battle'?'전투 중':room.count>=2?'가득 참':'참가 가능';status.append(count,phase);
  const crate=document.createElement('span');crate.className='room-crate';crate.setAttribute('aria-hidden','true');crate.innerHTML='<svg viewBox="0 0 54 46"><path d="M5 14L20 5l29 4-13 10z" fill="#778577" stroke="#a8b3a0"/><path d="M5 14l31 5v24L5 37z" fill="#46534c" stroke="#829081"/><path d="M36 19l13-10v25L36 43z" fill="#293c36" stroke="#829081"/><path d="M13 15v24m15-21v23M41 15v24" stroke="#a4aa8e" stroke-width="3"/><path d="M17 25l7 1v6l-7-1z" fill="#98aa9a"/></svg>';
- row.append(badge,label,soldier,status,crate);row.setAttribute('aria-label',room.host+'의 방 '+room.code+' '+room.count+'/'+room.capacity+' '+phase.textContent);
- row.onclick=()=>{if(connecting)return;chosenMode='pvp';$('room').value=room.code;connectRoom(false,{joinExisting:true});};list.append(row);}
+ row.append(badge,label,soldier,status,crate);row.setAttribute('aria-label',room.host+'의 방 '+room.code+' '+room.count+'/'+room.capacity+' '+phase.textContent+(room.locked?' 비밀번호 필요':''));
+ row.onclick=()=>{if(connecting)return;if(room.locked){openRoomPasswordDialog(room.code,room.host);return;}chosenMode='pvp';$('room').value=room.code;connectRoom(false,{joinExisting:true},'rooms');};list.append(row);}
  $('rooms-status').textContent=data.rooms.length?'공개 방 '+data.rooms.length+'개':'열린 방이 없습니다. 메뉴로 돌아가 HOST로 새 방을 만들어 주세요.';
  }catch{if(request===roomsRequest&&screen==='rooms')$('rooms-status').textContent='방 목록을 불러오지 못했습니다. 새로고침해 주세요.';}
 }
@@ -640,5 +678,5 @@ $('browser-create').onclick=()=>createRoom();$('menu-ai').onclick=()=>createRoom
 $('open-public').onclick=()=>{if(saveRoomName())showScreen('rooms');};$('open-private').onclick=()=>{if(saveRoomName())showScreen('private');};
 $('menu-back').onclick=()=>showScreen('title');$('rooms-back').onclick=() =>showScreen('menu');$('private-back').onclick=()=>showScreen('menu');$('refresh-rooms').onclick=refreshRooms;
 $('leave-room').onclick=leaveRoomConnection;
-$('code-join').onsubmit=e=>{e.preventDefault();if(connecting||team!==null)return;chosenMode='pvp';$('room').value=$('private-room-code').value.trim();connectRoom(false,{joinExisting:true});};
+$('code-join').onsubmit=e=>{e.preventDefault();if(connecting||team!==null)return;chosenMode='pvp';$('room').value=$('private-room-code').value.trim();connectRoom(false,{joinExisting:true,password:$('private-room-password').value},'private');};
 setInterval(()=>{if(screen==='rooms'&&!connecting)refreshRooms();},5000);

@@ -108,3 +108,15 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 #connection-overlay h2{margin:0;color:#e4efcc;font-size:25px}#connection-overlay p{color:#bcd0d8;font-size:13px;margin:18px 0 24px}#connection-exit{min-height:44px;background:#263e49;color:#e4ece4;border:1px solid #7c9298}
 #peer-connection-notice{position:fixed;z-index:9;top:90px;left:50%;transform:translateX(-50%);width:max-content;max-width:90vw;padding:10px 15px;background:#16252ce8;border:1px solid #bb9e64;color:#ffe0a2;font-size:12px;text-align:center;pointer-events:none}
 @media(max-width:600px){#peer-connection-notice{top:70px;font-size:10px}}
+
+.room-access-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start}
+.room-access-grid>div{min-width:0}.room-access-grid label{margin:0 0 8px;font-size:10px;line-height:12px;white-space:nowrap;color:#c8d9df}
+#lobby-join #room-password-form{padding:0;margin:0;min-width:0;background:transparent;border:0}
+#lobby-join .room-access-grid input{width:100%;min-width:0;height:44px;padding:10px 8px;font-size:18px;letter-spacing:2px}
+#lobby-join .room-password-entry{display:flex;gap:4px}#lobby-join .room-password-entry input{flex:1;width:0;font-size:13px;letter-spacing:1px}
+#lobby-join .room-password-entry button{flex:0 0 44px;min-height:44px;padding:4px;font-size:10px;background:#314b45;color:#e0edc5;border:1px solid #7b956a}
+#room-password-status{min-height:28px;margin-top:10px;font-size:10px;line-height:14px;color:#b5c9c8}
+#code-join #private-room-password{font-size:16px;letter-spacing:1px}
+#room-join-dialog{width:min(430px,calc(100vw - 32px));padding:24px;background:#12212c;color:#e3ece5;border:1px solid #81928b;box-shadow:0 20px 90px #0009}
+#room-join-dialog::backdrop{background:#030b13c9;backdrop-filter:blur(4px)}.room-join-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}.room-join-heading h2{margin:0;font-size:20px}.room-join-heading button{min-height:44px}
+#room-join-info{font-size:12px;color:#b3c7ca;overflow-wrap:anywhere}#room-join-form{display:grid;gap:12px;background:none;border:0;padding:0;margin:18px 0 0}#room-join-form label{margin:0}#room-join-form input{width:100%;font-size:18px;letter-spacing:2px}#room-join-form button{min-height:46px}#room-join-status{color:#ffc19f}

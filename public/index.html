@@ -17,7 +17,11 @@
  <small id="mode-hint">1vs1을 눌러 전투 방식을 선택하세요.</small>
 </section><div class="lobby-heading"><span class="eyebrow">OPERATIONS BASE / HANGAR 07</span><h2>출격 준비</h2></div>
 <form id="profile-form" class="name-form"><label for="player-name">콜사인 · 플레이어 이름</label><input id="player-name" placeholder="이름을 입력하세요" maxlength="12" required autocomplete="nickname"><button>이름 저장</button><small>1~12자 · 상대에게 표시됩니다.</small></form>
-<div id="lobby-join"><div class="joined-room"><label for="room">ROOM CODE / 초대 코드</label><input id="room" readonly aria-label="현재 방 코드"><small>친구에게 이 코드를 알려주세요.</small><button id="leave-room" class="quiet">방 나가기 / 메뉴로</button></div></div>
+<div id="lobby-join"><div class="joined-room">
+ <div class="room-access-grid"><div><label for="room">초대 코드</label><input id="room" readonly aria-label="현재 방 코드"></div>
+ <form id="room-password-form"><label for="room-password">방 비밀번호</label><div class="room-password-entry"><input id="room-password" type="password" maxlength="24" placeholder="미설정" autocomplete="new-password" aria-describedby="room-password-status"><button id="save-room-password" type="submit">저장</button></div></form></div>
+ <small id="room-password-status" role="status">방장은 비밀번호를 설정할 수 있습니다.</small><button id="leave-room" class="quiet">방 나가기 / 메뉴로</button>
+</div></div>
 <div id="lobby-rotation-hint" class="lobby-rotation-hint">캐릭터를 좌우로 드래그해 회전</div><div class="operator-labels"><div><span class="operator-tag">01 / YOU</span><strong id="own-label">나의 오퍼레이터</strong><small id="own-ready">접속 전</small></div><div id="opponent-label" hidden><span class="operator-tag enemy">02 / OPPONENT</span><strong id="enemy-name">상대</strong><small id="enemy-ready">로비 입장</small></div></div>
 <div class="lobby-bottom"><section class="lobby-loadout"><p class="eyebrow">LOADOUT / 무기 선택</p><div id="lobby-weapons" aria-label="무기 슬롯"></div><small class="loadout-hint">슬롯을 눌러 무기 선택</small></section><div class="launch"><div id="lobby-chat-anchor"></div><p id="lobby-status" role="status">이름을 저장한 뒤 같은 방 코드로 접속하세요.</p><button id="start-game" disabled><span>DEPLOY / 1 VS 1</span>게임 시작 <b>↗</b></button><small><span id="launch-help">AI는 혼자 시작 · PVP는 두 명 모두 준비</span> <a href="/audio/credits" target="_blank" rel="noopener">사운드 출처</a></small></div></div>
 </section>
@@ -47,10 +51,15 @@
  <div class="flow-panel private-panel">
   <div class="flow-heading"><button id="private-back" class="quiet">← 메뉴로</button><span>03 / PRIVATE</span></div>
   <h1 id="private-title">코드로 참가</h1><p>친구에게 받은 방 코드를 입력하세요.</p>
-  <form id="code-join"><label for="private-room-code">초대 코드</label><input id="private-room-code" maxlength="24" pattern="[A-Za-z0-9_-]+" placeholder="방 코드 입력" required autocomplete="off"><button>로비 참가 ↗</button></form>
+  <form id="code-join"><label for="private-room-code">초대 코드</label><input id="private-room-code" maxlength="24" pattern="[A-Za-z0-9_-]+" placeholder="방 코드 입력" required autocomplete="off"><label for="private-room-password">방 비밀번호</label><input id="private-room-password" type="password" maxlength="24" placeholder="비밀번호가 있는 방이면 입력" autocomplete="current-password"><button>로비 참가 ↗</button></form>
   <p id="private-status" class="flow-status" role="status"></p>
  </div>
 </section>
+<dialog id="room-join-dialog" aria-labelledby="room-join-title">
+ <div class="room-join-heading"><h2 id="room-join-title">방 비밀번호 입력</h2><button id="close-room-join" type="button" class="quiet" aria-label="비밀번호 입력 닫기">닫기 ×</button></div>
+ <p id="room-join-info"></p><form id="room-join-form"><label for="join-room-password">방 비밀번호</label><input id="join-room-password" type="password" maxlength="24" required autocomplete="current-password" placeholder="비밀번호 입력"><button id="room-join-submit" type="submit">참가하기</button></form>
+ <p id="room-join-status" class="flow-status" role="status"></p>
+</dialog>
 <dialog id="weapon-picker" aria-labelledby="weapon-picker-title"><div class="picker-heading"><div><span class="eyebrow">ARMORY / 무기고</span><h2 id="weapon-picker-title">주무기 선택</h2></div><button id="close-weapon-picker" class="quiet" aria-label="무기 선택 닫기">닫기 ×</button></div><p id="weapon-picker-help">아이콘을 눌러 장착하세요.</p><div id="weapon-options"></div></dialog><main id="battle-main" class="fps-game" hidden>
 <div id="viewport"></div>
 <div id="match-intro" class="match-intro" data-stage="flyover" hidden aria-live="polite">

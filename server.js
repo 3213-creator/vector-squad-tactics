@@ -1,6 +1,7 @@
 import {isPrimary,isSidearm} from './weapons.js';
 import http from 'node:http';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,scrypt,timingSafeEqual} from 'node:crypto';
+import {promisify} from 'node:util';
 import {gzipSync} from 'node:zlib';
 import {readFile,stat} from 'node:fs/promises';
 import {createReadStream} from 'node:fs';
@@ -10,6 +11,23 @@ import {setWorld} from './physics.js';
 import {buildNavigation,createBrain,botInput} from './bot.js';
 import {loadWorld} from './world.js';
 const world=await loadWorld();setWorld(world);const navigation=buildNavigation(world);
+const derivePassword=promisify(scrypt);
+function roomPasswordError(message,code){const error=new Error(message);error.code=code;return error;}
+function readRoomPassword(value){
+ if(typeof value!=='string'||Array.from(value).length>24||/[\u0000-\u001f\u007f]/.test(value))throw roomPasswordError('방 비밀번호는 24자 이내로 입력하세요.','PASSWORD_INVALID');
+ return value;
+}
+async function hashRoomPassword(value){const salt=randomBytes(16);return {salt,hash:await derivePassword(value,salt,32)};}
+async function verifyRoomPassword(room,value,now){
+ if(room.passwordUpdating)throw roomPasswordError('방장이 비밀번호를 설정 중입니다. 잠시 후 다시 참가하세요.','PASSWORD_CHANGED');
+ if(!room.password)return;
+ if(!value)throw roomPasswordError('방 비밀번호를 입력하세요.','PASSWORD_REQUIRED');
+ room.authTokens=Math.min(10,room.authTokens+(now-room.authRefilledAt)/1000);room.authRefilledAt=now;
+ if(room.authTokens<1)throw roomPasswordError('비밀번호 확인 요청이 많습니다. 잠시 후 다시 시도하세요.','PASSWORD_RATE_LIMIT');room.authTokens--;
+ const version=room.passwordVersion,expected=room.password,actual=await derivePassword(value,expected.salt,32);
+ if(version!==room.passwordVersion||room.passwordUpdating)throw roomPasswordError('방 비밀번호가 변경되었습니다. 다시 입력하세요.','PASSWORD_CHANGED');
+ if(!timingSafeEqual(actual,expected.hash))throw roomPasswordError('방 비밀번호가 올바르지 않습니다.','PASSWORD_INCORRECT');
+}
 const assets={'/assets/soldier-rigged.glb':['public/assets/soldier-rigged.glb','model/gltf-binary'],'/assets/crouch-idle.json':['public/assets/crouch-idle.json','application/json'],'/assets/dying.json':['public/assets/dying.json','application/json'],'/assets/rifle-idle.json':['public/assets/rifle-idle.json','application/json'],'/remote-combat.js':['public/remote-combat.js','text/javascript'],'/weapon-model.js':['public/weapon-model.js','text/javascript'],'/weapons.js':['weapons.js','text/javascript'],'/':['public/index.html','text/html'],'/style.css':['public/style.css','text/css'],'/client.js':['public/client.js','text/javascript'],'/game.js':['game.js','text/javascript'],'/three.js':['node_modules/three/build/three.module.js','text/javascript']};
 Object.assign(assets,{'/bvh.js':['node_modules/three-mesh-bvh/build/index.module.js','text/javascript'],'/collision-world.js':['collision-world.js','text/javascript'],'/spatial-audio.js':['public/spatial-audio.js','text/javascript'],'/audio/credits':['public/audio/CREDITS.md','text/plain'],'/environment.js':['environment.js','text/javascript'],'/physics.js':['physics.js','text/javascript'],'/map-data.js':['map-data.js','text/javascript'],'/assets/minimap.webp':['public/assets/minimap.webp','image/webp'],'/assets/collision.glb':['public/assets/collision.glb','model/gltf-binary'],'/assets/title-background.webp':['public/assets/title-background.webp','image/webp'],'/assets/death-match-logo.webp':['public/assets/death-match-logo.webp','image/webp'],'/assets/arena.glb':['public/assets/arena.glb','model/gltf-binary'],'/assets/soldier.glb':['public/assets/soldier.glb','model/gltf-binary'],'/assets/swat.glb':['public/assets/swat.glb','model/gltf-binary']});
 for(const path of ['loaders/GLTFLoader.js','utils/BufferGeometryUtils.js','utils/SkeletonUtils.js','math/Capsule.js'])assets['/addons/'+path]=['node_modules/three/examples/jsm/'+path,'text/javascript'];
@@ -40,7 +58,7 @@ function serveMusic(req,res,track){
  const stream=createReadStream(track.file,{start,end});
  stream.on('error',()=>res.destroy());res.once('close',()=>stream.destroy());stream.pipe(res);
 }
-const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.state.players.filter(p=>p&&!p.isBot).length,capacity:2,phase:r.state.phase,mode:r.state.mode}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const music=musicTracks.get(pathname);if(music){serveMusic(req,res,music);return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/api/rooms'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}).end(JSON.stringify({rooms:[...rooms.values()].filter(r=>!r.private).map(r=>({code:r.code,host:r.state.players[0]?.name||'',count:r.state.players.filter(p=>p&&!p.isBot).length,capacity:2,phase:r.state.phase,mode:r.state.mode,locked:!!r.password}))}));return;}if(pathname==='/healthz'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({status:'ok'}));return;}const music=musicTracks.get(pathname);if(music){serveMusic(req,res,music);return;}const asset=cachedAssets.get(pathname);if(!asset){res.writeHead(404).end();return;}res.setHeader('Content-Type',asset.type+(asset.type.startsWith('text/')?'; charset=utf-8':''));res.setHeader('Cache-Control',pathname==='/three.js'||pathname.startsWith('/addons/')||pathname.startsWith('/assets/')||pathname.startsWith('/audio/')?'public, max-age=86400':'no-cache');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Accept-Encoding');const useGzip=/\bgzip\b/.test(req.headers['accept-encoding']||'');if(useGzip)res.setHeader('Content-Encoding','gzip');const body=useGzip?asset.gzip:asset.body;res.setHeader('Content-Length',body.length);res.end(body);}catch{res.writeHead(500).end('Server error');}});
 const wss=new WebSocketServer({server,maxPayload:4096});
 const rooms=new Map(),sessions=new Map();
 const RECONNECT_GRACE_MS=60000,STATE_BUFFER_LIMIT=65536;
@@ -56,7 +74,7 @@ function clearSeatInputs(room,team){room.inputs[team]=null;room.inputAt[team]=0;
 function resetMatch(room){room.state=returnToLobby(room.state);room.brain=createBrain();for(let i=0;i<2;i++){clearSeatInputs(room,i);if(room.sessions[i])room.sessions[i].lastSequence=0;}}
 function broadcast(room){
  const connected=room.players.map(ws=>ws?.readyState===WebSocket.OPEN);
- const message=JSON.stringify({type:'state',serverTime:Date.now(),state:room.state,ready:room.state.players.every(Boolean),connected});
+ const message=JSON.stringify({type:'state',serverTime:Date.now(),state:room.state,ready:room.state.players.every(Boolean),connected,passwordProtected:!!room.password});
  for(const ws of room.players)send(ws,message,true);
 }
 function closeRoom(room,message,code){
@@ -77,7 +95,7 @@ function reserveSeat(session,code,reason){
 wss.on('connection',ws=>{
  if(wss.clients.size>220){ws.close(1013,'Server full');return;}
  ws.connectionId=++connectionId;ws.lastSeen=Date.now();ws.on('pong',()=>{ws.lastSeen=Date.now();});
- let room=null,team=null,session=null,tokens=240,refilledAt=Date.now(),lastRateNotice=0;
+ let room=null,team=null,session=null,tokens=240,refilledAt=Date.now(),lastRateNotice=0,joining=false;
  const joinTimer=setTimeout(()=>{if(!room)ws.close(1008,'Join timeout');},30000);
  function attach(next,resumed){
   session=next;room=next.room;team=next.team;
@@ -88,41 +106,65 @@ wss.on('connection',ws=>{
   if(resumed)console.info(JSON.stringify({event:'player_resumed',team,phase:room.state.phase}));
   broadcast(room);
  }
- ws.on('message',raw=>{try{
+ ws.on('message',async raw=>{let actionType=null;try{
   const now=Date.now();ws.lastSeen=now;
   tokens=Math.min(240,tokens+(now-refilledAt)*.12);refilledAt=now;
   // A short input burst is coalesced/dropped, never treated as a reason to delete a match.
   if(tokens<1){if(now-lastRateNotice>1000){lastRateNotice=now;console.warn(JSON.stringify({event:'input_throttled',connectionId:ws.connectionId}));}return;}tokens--;
-  const a=JSON.parse(raw.toString());if(!a||typeof a!=='object'||Array.isArray(a))throw Error('올바른 명령 객체가 필요합니다.');
+  const a=JSON.parse(raw.toString());if(!a||typeof a!=='object'||Array.isArray(a))throw Error('올바른 명령 객체가 필요합니다.');actionType=a.type;
   if(!room){
-   if(a.type==='resume'){
-    const saved=typeof a.token==='string'&&a.token.length===32?sessions.get(a.token):null;
-    if(!saved||rooms.get(saved.room.code)!==saved.room||saved.room.code!==a.room||saved.expiresAt&&now>=saved.expiresAt){
-     send(ws,{type:'resumeRejected',message:'기존 전투를 복구할 수 없습니다. 서버 재시작 또는 재연결 대기 시간 만료입니다.'});ws.close(4004,'Session expired');return;
+   if(joining)return;joining=true;try{
+    if(a.type==='resume'){
+     const saved=typeof a.token==='string'&&a.token.length===32?sessions.get(a.token):null;
+     if(!saved||rooms.get(saved.room.code)!==saved.room||saved.room.code!==a.room||saved.expiresAt&&now>=saved.expiresAt){
+      send(ws,{type:'resumeRejected',message:'기존 전투를 복구할 수 없습니다. 서버 재시작 또는 재연결 대기 시간 만료입니다.'});ws.close(4004,'Session expired');return;
+     }
+     attach(saved,true);return;
     }
-    attach(saved,true);return;
-   }
-   if(a.type!=='join'||typeof a.room!=='string'||! /^[A-Za-z0-9_-]{1,24}$/.test(a.room))throw Error('방 코드는 영문·숫자 1~24자로 입력하세요.');
-   if(a.name!==undefined&&(typeof a.name!=='string'||!a.name.trim()||Array.from(a.name.trim()).length>12||/[\u0000-\u001f\u007f]/.test(a.name)))throw Error('이름은 1~12자로 입력하세요.');
-   if(a.createOnly&&rooms.has(a.room))throw Error('이미 존재하는 방 코드입니다. 다시 만들어 주세요.');if(a.joinExisting&&!rooms.has(a.room))throw Error('종료된 방입니다. 목록을 새로고침해 주세요.');
-   if(!rooms.has(a.room)){
-    if(rooms.size>=100)throw Error('서버 방이 가득 찼습니다.');
-    rooms.set(a.room,{state:initial(),brain:createBrain(),players:[null,null],sessions:[null,null],inputs:[null,null],inputAt:[0,0],jumpPending:[false,false],interactPending:[false,false],firePending:[false,false],chat:[],private:!!a.private,code:a.room});
-   }
-   const candidate=rooms.get(a.room),humans=candidate.state.players.filter(p=>p&&!p.isBot).length;
-   if(humans>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('전투 또는 결과 확인이 진행 중입니다. 로비로 돌아온 뒤 참가해 주세요.');
-   const seat=candidate.state.players.findIndex(p=>!p||p.isBot);
-   candidate.state.players[seat]={name:a.name?.trim()||`오퍼레이터 ${seat+1}`,ready:false};
-   configureMode(candidate.state,humans+1===2?'pvp':a.mode==='pvp'?'pvp':'ai');
-   const unit=candidate.state.units[seat];
-   if(Object.hasOwn(weapons,a.weapon)){unit.weapon=a.weapon;if(isPrimary(a.weapon))unit.primary=a.weapon;if(isSidearm(a.weapon))unit.secondary=a.weapon;}
-   if(isPrimary(a.primary))unit.primary=a.primary;if(isSidearm(a.secondary))unit.secondary=a.secondary;
-   const token=randomBytes(24).toString('base64url'),saved={token,room:candidate,team:seat,ws:null,expiresAt:0,expiryTimer:null,lastChatAt:0,lastSequence:unit.ack};
-   sessions.set(token,saved);candidate.sessions[seat]=saved;attach(saved,false);return;
+    if(a.type!=='join'||typeof a.room!=='string'||! /^[A-Za-z0-9_-]{1,24}$/.test(a.room))throw Error('방 코드는 영문·숫자 1~24자로 입력하세요.');
+    if(a.name!==undefined&&(typeof a.name!=='string'||!a.name.trim()||Array.from(a.name.trim()).length>12||/[\u0000-\u001f\u007f]/.test(a.name)))throw Error('이름은 1~12자로 입력하세요.');
+    if(a.createOnly&&rooms.has(a.room))throw Error('이미 존재하는 방 코드입니다. 다시 만들어 주세요.');if(a.joinExisting&&!rooms.has(a.room))throw Error('종료된 방입니다. 목록을 새로고침해 주세요.');
+    if(!rooms.has(a.room)){
+     if(rooms.size>=100)throw Error('서버 방이 가득 찼습니다.');
+     rooms.set(a.room,{state:initial(),brain:createBrain(),players:[null,null],sessions:[null,null],inputs:[null,null],inputAt:[0,0],jumpPending:[false,false],interactPending:[false,false],firePending:[false,false],chat:[],private:!!a.private,code:a.room,password:null,passwordVersion:0,passwordRequest:0,passwordUpdating:false,authTokens:10,authRefilledAt:now});
+    }
+    const candidate=rooms.get(a.room);
+    if(candidate.state.players.filter(p=>p&&!p.isBot).length>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('전투 또는 결과 확인이 진행 중입니다. 로비로 돌아온 뒤 참가해 주세요.');
+    const passwordVersion=candidate.passwordVersion,suppliedPassword=readRoomPassword(a.password??'');
+    if(candidate.password||candidate.passwordUpdating)await verifyRoomPassword(candidate,suppliedPassword,now);
+    if(ws.readyState!==WebSocket.OPEN)return;
+    if(rooms.get(a.room)!==candidate)throw Error('종료된 방입니다. 목록을 새로고침해 주세요.');
+    if(passwordVersion!==candidate.passwordVersion||candidate.passwordUpdating)throw roomPasswordError('방 비밀번호가 변경되었습니다. 다시 입력하세요.','PASSWORD_CHANGED');
+    // Recheck after the asynchronous password check before assigning a seat.
+    const humans=candidate.state.players.filter(p=>p&&!p.isBot).length;
+    if(humans>=2)throw Error('이미 두 명이 접속한 방입니다.');if(candidate.state.phase!=='lobby')throw Error('전투 또는 결과 확인이 진행 중입니다. 로비로 돌아온 뒤 참가해 주세요.');
+    const seat=candidate.state.players.findIndex(p=>!p||p.isBot);
+    candidate.state.players[seat]={name:a.name?.trim()||`오퍼레이터 ${seat+1}`,ready:false};
+    configureMode(candidate.state,humans+1===2?'pvp':a.mode==='pvp'?'pvp':'ai');
+    const unit=candidate.state.units[seat];
+    if(Object.hasOwn(weapons,a.weapon)){unit.weapon=a.weapon;if(isPrimary(a.weapon))unit.primary=a.weapon;if(isSidearm(a.weapon))unit.secondary=a.weapon;}
+    if(isPrimary(a.primary))unit.primary=a.primary;if(isSidearm(a.secondary))unit.secondary=a.secondary;
+    const token=randomBytes(24).toString('base64url'),saved={token,room:candidate,team:seat,ws:null,expiresAt:0,expiryTimer:null,lastChatAt:0,lastSequence:unit.ack};
+    sessions.set(token,saved);candidate.sessions[seat]=saved;attach(saved,false);return;
+   }finally{joining=false;}
   }
   if(session?.ws!==ws||rooms.get(room.code)!==room)return;
   if(a.type==='ping'){send(ws,{type:'pong'});return;}
   if(a.type==='leaveRoom'){closeRoom(room,'상대가 방을 나갔습니다. 방 메뉴에서 다시 참가해 주세요.','peer_left');return;}
+  if(a.type==='roomPassword'){
+   if(team!==0)throw roomPasswordError('방장만 비밀번호를 설정할 수 있습니다.','PASSWORD_FORBIDDEN');
+   if(room.state.phase!=='lobby')throw roomPasswordError('로비에서 비밀번호를 설정하세요.','PASSWORD_FORBIDDEN');
+   const value=readRoomPassword(a.password),request=++room.passwordRequest;room.passwordUpdating=true;
+   try{
+    const password=value?await hashRoomPassword(value):null;
+    if(session.ws!==ws||rooms.get(room.code)!==room)return;
+    if(room.state.phase!=='lobby')throw roomPasswordError('로비에서 비밀번호를 설정하세요.','PASSWORD_FORBIDDEN');
+    if(request!==room.passwordRequest)return;
+    room.password=password;room.passwordVersion++;
+    send(ws,{type:'passwordUpdated',passwordProtected:!!password});broadcast(room);
+   }finally{if(request===room.passwordRequest)room.passwordUpdating=false;}
+   return;
+  }
   if(a.type==='input'){
    if(room.state.phase!=='battle'||room.state.winner!==null)return;
    const input=cleanInput(a);if(input.seq<=session.lastSequence)return;session.lastSequence=input.seq;
@@ -143,7 +185,7 @@ wss.on('connection',ws=>{
   if(a.type==='leaveMatch'){if(room.state.phase==='battle'){resetMatch(room);broadcast(room);}return;}
   if(a.type==='ready'&&room.state.players.some((p,id)=>p&&!p.isBot&&room.players[id]?.readyState!==WebSocket.OPEN))throw Error('상대가 다시 연결할 때까지 기다려 주세요.');
   action(room.state,team,a,now);broadcast(room);
- }catch(e){send(ws,{type:'error',message:e.message});}});
+ }catch(e){send(ws,{type:'error',code:e.code||'REQUEST_FAILED',action:actionType,message:e.message});}});
  ws.on('error',()=>{});
  ws.on('close',(code,reason)=>{clearTimeout(joinTimer);if(session?.ws===ws)reserveSeat(session,code,reason);});
 });

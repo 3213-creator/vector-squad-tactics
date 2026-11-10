@@ -15,7 +15,8 @@ const elements=new Map(),$=id=>{if(!elements.has(id))elements.set(id,document.ge
 function setHUDText(id,value){const el=$(id),text=String(value);if(el.textContent!==text)el.textContent=text;}
 let state=initial(),team=null,socket=null,entered=false,profileName='',chosen='rifle',chosenSecondary='pistol',chosenMode='ai',startPending=false,assetsReady=false,inBattle=false,seq=0,pending=[],predicted=null,lastEvent=0;
 let screen='title',connecting=false,connectionNotice='',roomsRequest=0,serverClockOffset=0,resultReturnPending=false;
-let duelModesOpen=false;
+let modeMenu='formats';
+const modePages={duel:{label:'1vs1',trigger:'mode-1v1',options:'duel-mode-options'},soloTeam:{label:'1vsTeam',trigger:'mode-1vteam',options:'solo-team-mode-options'},teamTeam:{label:'TeamvsTeam',trigger:'mode-teamvteam',options:'team-mode-options'}};
 const network={ready:false,intentional:false,reconnecting:false,failed:false,restorePending:false,session:null,retryTimer:0,attemptTimer:0,startedAt:0,attempts:0,lastMessageAt:0,peerOffline:false,roomLocked:false,joinOrigin:'menu',passwordPrompt:null};
 let passwordSavePending=false,roomPasswordNotice='',roomPasswordTarget=null;
 let lastInputSentAt=-Infinity,fireQueued=false;
@@ -111,7 +112,7 @@ $('close-weapon-picker').onclick=()=>$('weapon-picker').close();$('weapon-picker
 function displayLobby(){
  const previousScreen=screen,connected=team!==null&&!!state.players[team],waitingForResult=connected&&state.phase==='results'&&!!state.resultsConfirmed?.[team];
  if(connected)screen=state.phase==='results'&&!waitingForResult?'results':['intro','countdown','battle','ending'].includes(state.phase)?'battle':'lobby';else if(['lobby','battle','results'].includes(screen))screen='menu';
- if(screen==='lobby'&&previousScreen!=='lobby')duelModesOpen=false;
+ if(screen==='lobby'&&previousScreen!=='lobby')modeMenu='formats';
  syncBackgroundMusic();if(screen!=='lobby')finishLobbyTurn();entered=screen!=='title';const battle=screen==='battle';document.body.dataset.screen=screen;
  for(const [id,value]of [['title-screen','title'],['menu-screen','menu'],['rooms-screen','rooms'],['private-screen','private'],['lobby','lobby'],['battle-main','battle'],['results-screen','results']])$(id).hidden=screen!==value;
  document.querySelector('header').hidden=screen!=='lobby';document.querySelector('footer').hidden=true;$('chat-panel').hidden=screen!=='lobby'&&!battle;
@@ -121,9 +122,9 @@ function displayLobby(){
  $('room-player-name').disabled=connecting;$('code-join').querySelector('button').disabled=connecting;$('private-room-code').disabled=connecting;$('private-room-password').disabled=connecting;
  $('join-room-password').disabled=connecting;$('room-join-submit').disabled=connecting;$('close-room-join').disabled=connecting;renderRoomAccess();
  const me=team===null?null:state.players[team],other=team===null?null:state.players[1-team];$('lobby-coins').textContent=`◉ ${team===null?300:state.units[team].coins}`;$('display-name').textContent=me?.name||profileName||'이름을 설정하세요';$('own-label').textContent=me?.name||profileName||'나의 오퍼레이터';$('own-ready').textContent=me?.ready?'READY / 준비 완료':me?'대기 중':'접속 전';$('opponent-label').hidden=!other;$('enemy-name').textContent=other?.name||'';$('enemy-ready').textContent=other?.ready?'READY / 준비 완료':'입장 · 준비 중';$('lobby').classList.toggle('has-opponent',!!other);
- const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;renderModeSelector(mode,humans,me,waitingForResult);$('launch-help').textContent=waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
+ const mode=me?state.mode:chosenMode,humans=state.players.filter(p=>p&&!p.isBot).length;renderModeSelector(mode,humans,me,waitingForResult);$('launch-help').textContent=modeMenu==='soloTeam'||modeMenu==='teamTeam'?'이 전투 형식은 준비 중입니다. 1vs1을 선택해 주세요.':waitingForResult?'상대가 결과를 확인하면 다음 경기를 시작할 수 있습니다.':mode==='ai'?'게임 시작을 누르면 AI와 바로 전투':'두 플레이어 모두 준비하면 전투 시작';
  $('lobby-status').textContent=waitingForResult?'상대가 전투 결과를 확인하고 있습니다. 잠시 기다려 주세요.':!assetsReady?'맵과 캐릭터를 불러오는 중입니다.':startPending?'AI 전투에 접속하는 중입니다…':!me?(mode==='ai'?'게임 시작을 누르면 AI 훈련에 바로 접속합니다.':'이름을 저장한 뒤 같은 방으로 접속하세요.'):!other?'상대 접속을 기다리는 중입니다.':other.isBot?'AI 준비 완료 · 게임 시작을 눌러 주세요.':me.ready?'상대의 준비를 기다리는 중입니다.':`${other.name} 님이 입장했습니다. 시작을 눌러 주세요.`;
- $('start-game').disabled=connecting||network.peerOffline||waitingForResult||!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${waitingForResult?'상대 확인 대기':startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').disabled=connecting;
+ $('start-game').disabled=modeMenu==='soloTeam'||modeMenu==='teamTeam'||connecting||network.peerOffline||waitingForResult||!assetsReady||startPending||(mode==='pvp'&&(!me||!other));$('start-game').innerHTML=`<span>REAL-TIME FPS / 3 LIVES</span>${waitingForResult?'상대 확인 대기':startPending?'접속 중…':!assetsReady?'에셋 로딩 중…':me?.ready?'준비 취소':'게임 시작'} ↗`;$('leave-room').disabled=connecting;
  if(waitingForResult){$('own-ready').textContent='로비 대기 중';$('enemy-ready').textContent='전투 결과 확인 중';}$('edit-name').disabled=waitingForResult;
  renderLoadout();rebuildLobby();
  if(screen!=='lobby'&&$('weapon-picker').open)$('weapon-picker').close();if(battle&&!inBattle)startBattle();if(!battle&&inBattle)leaveBattle();if(screen==='results'){updateMatchResults();if(previousScreen!=='results')requestAnimationFrame(()=>{if(screen==='results')$('result-confirm').focus({preventScroll:true});});}syncRenderLoop();
@@ -281,24 +282,27 @@ $('room-join-form').onsubmit=e=>{
  connectRoom(false,{joinExisting:true,password:$('join-room-password').value},'password-dialog');
 };
 function renderModeSelector(mode,humans,me,waitingForResult){
- $('mode-formats').hidden=duelModesOpen;$('duel-mode-options').hidden=!duelModesOpen;$('mode-back').hidden=!duelModesOpen;
- $('mode-1v1').setAttribute('aria-expanded',String(duelModesOpen));setHUDText('mode-heading',duelModesOpen?'1vs1':'GAME MODE');
+ $('mode-formats').hidden=modeMenu!=='formats';$('mode-back').hidden=modeMenu==='formats';
+ for(const [page,menu]of Object.entries(modePages)){$(menu.options).hidden=modeMenu!==page;$(menu.trigger).setAttribute('aria-expanded',String(modeMenu===page));}
+ setHUDText('mode-heading',modePages[modeMenu]?.label||'GAME MODE');
  for(const value of ['ai','pvp']){
   const button=$('mode-'+value);button.setAttribute('aria-pressed',String(mode===value));
   button.disabled=waitingForResult||!!me&&(team!==0||(value==='ai'&&humans>1));
  }
- setHUDText('mode-hint',!duelModesOpen?'1vs1을 눌러 전투 방식을 선택하세요.':humans>1?'두 명 접속 · PVP 대전':mode==='ai'?'혼자 플레이 · 순찰/교전 AI':'같은 방 코드로 친구를 초대하세요');
+ setHUDText('mode-hint',modeMenu==='formats'?'대전 형식을 선택하세요.':modeMenu!=='duel'?'전투 기능은 준비 중입니다.':humans>1?'두 명 접속 · PVP 대전':mode==='ai'?'혼자 플레이 · 순찰/교전 AI':'같은 방 코드로 친구를 초대하세요');
 }
-function showDuelOptions(open){
- duelModesOpen=open;displayLobby();
+function showModeOptions(page){
+ const previous=modeMenu;modeMenu=page;displayLobby();
  const selected=$('mode-'+(team===null?chosenMode:state.mode));
- (open?(selected.disabled?$('mode-back'):selected):$('mode-1v1')).focus({preventScroll:true});
+ const target=page==='formats'?$(modePages[previous]?.trigger||'mode-1v1'):page==='duel'&&!selected.disabled?selected:$('mode-back');
+ target.focus({preventScroll:true});
 }
-$('mode-1v1').onclick=()=>showDuelOptions(true);$('mode-back').onclick=()=>showDuelOptions(false);
-// Team format buttons are placeholders; they have no action or server mode assignment.
+for(const [page,menu]of Object.entries(modePages))$(menu.trigger).onclick=()=>showModeOptions(page);
+$('mode-back').onclick=()=>showModeOptions('formats');
+// Team submodes are presentation only; the server still accepts just AI and PVP duels.
 for(const mode of ['ai','pvp'])$('mode-'+mode).onclick=()=>{if(team===null){chosenMode=mode;displayLobby();}else send({type:'mode',mode});};
 $('return-lobby').onclick=()=>send({type:'leaveMatch'});
-function launchGame(){if(!assetsReady||startPending||state.phase==='results')return;if(team!==null){send({type:'ready'});return;}if(chosenMode!=='ai')return;if(!profileName){startPending=true;$('profile-form').hidden=false;$('player-name').focus();return;}$('room').value='AI_'+crypto.randomUUID().replaceAll('-','').slice(0,18);connectRoom(true,{private:true,createOnly:true});}
+function launchGame(){if(modeMenu==='soloTeam'||modeMenu==='teamTeam')return;if(!assetsReady||startPending||state.phase==='results')return;if(team!==null){send({type:'ready'});return;}if(chosenMode!=='ai')return;if(!profileName){startPending=true;$('profile-form').hidden=false;$('player-name').focus();return;}$('room').value='AI_'+crypto.randomUUID().replaceAll('-','').slice(0,18);connectRoom(true,{private:true,createOnly:true});}
 $('start-game').onclick=launchGame;
 function updateMatchResults(){
  if(team===null||state.winner===null)return;

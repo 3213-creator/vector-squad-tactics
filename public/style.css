@@ -99,7 +99,7 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 #mode-formats button{min-width:0;min-height:44px;padding:9px 5px;font-size:12px;white-space:nowrap}
 #mode-formats #mode-1v1{border-color:#bddc89;color:#e1efbd}
 #mode-formats button:disabled{opacity:.45;cursor:default}
-#duel-mode-options button{min-height:44px}
+#duel-mode-options button,.placeholder-mode-options button{min-height:44px}
 @media(min-width:601px) and (max-width:850px){.mode-selector{max-width:calc(100% - 340px)}#mode-formats button{font-size:10px;padding:9px 4px}}
 @media(max-width:600px){.mode-selector{width:auto;max-width:calc(100% - 40px)}#mode-formats button{font-size:11px}}
 
@@ -120,3 +120,6 @@ body{overflow:hidden}body[data-screen="lobby"]{overflow-y:auto}.flow-screen{posi
 #room-join-dialog{width:min(430px,calc(100vw - 32px));padding:24px;background:#12212c;color:#e3ece5;border:1px solid #81928b;box-shadow:0 20px 90px #0009}
 #room-join-dialog::backdrop{background:#030b13c9;backdrop-filter:blur(4px)}.room-join-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}.room-join-heading h2{margin:0;font-size:20px}.room-join-heading button{min-height:44px}
 #room-join-info{font-size:12px;color:#b3c7ca;overflow-wrap:anywhere}#room-join-form{display:grid;gap:12px;background:none;border:0;padding:0;margin:18px 0 0}#room-join-form label{margin:0}#room-join-form input{width:100%;font-size:18px;letter-spacing:2px}#room-join-form button{min-height:46px}#room-join-status{color:#ffc19f}
+
+.placeholder-mode-options button:disabled{opacity:.55;cursor:default}
+#team-mode-options button{min-width:0;padding:9px 6px;font-size:12px;white-space:nowrap}

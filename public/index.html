@@ -10,11 +10,13 @@
  <div class="mode-selector-heading"><button id="mode-back" type="button" aria-label="대전 형식 선택으로 돌아가기" hidden>←</button><span id="mode-heading">GAME MODE</span></div>
  <div id="mode-formats" role="group" aria-label="대전 형식 선택">
   <button id="mode-1v1" type="button" aria-expanded="false" aria-controls="duel-mode-options">1vs1</button>
-  <button id="mode-1vteam" type="button" disabled title="준비 중">1vsTeam</button>
-  <button id="mode-teamvteam" type="button" disabled title="준비 중">TeamvsTeam</button>
+  <button id="mode-1vteam" type="button" aria-expanded="false" aria-controls="solo-team-mode-options">1vsTeam</button>
+  <button id="mode-teamvteam" type="button" aria-expanded="false" aria-controls="team-mode-options">TeamvsTeam</button>
  </div>
  <div id="duel-mode-options" role="group" aria-label="1vs1 전투 방식 선택" hidden><button id="mode-ai" type="button" aria-pressed="true">AI 훈련</button><button id="mode-pvp" type="button" aria-pressed="false">PVP 대전</button></div>
- <small id="mode-hint">1vs1을 눌러 전투 방식을 선택하세요.</small>
+ <div id="solo-team-mode-options" class="placeholder-mode-options" role="group" aria-label="1vsTeam 전투 방식" hidden><button type="button" disabled title="준비 중">좀비 전투</button></div>
+ <div id="team-mode-options" class="placeholder-mode-options" role="group" aria-label="TeamvsTeam 전투 방식" hidden><button type="button" disabled title="준비 중">일반 전투</button><button type="button" disabled title="준비 중">거점 전투</button><button type="button" disabled title="준비 중">좀비 전투</button></div>
+ <small id="mode-hint">대전 형식을 선택하세요.</small>
 </section><div class="lobby-heading"><span class="eyebrow">OPERATIONS BASE / HANGAR 07</span><h2>출격 준비</h2></div>
 <form id="profile-form" class="name-form"><label for="player-name">콜사인 · 플레이어 이름</label><input id="player-name" placeholder="이름을 입력하세요" maxlength="12" required autocomplete="nickname"><button>이름 저장</button><small>1~12자 · 상대에게 표시됩니다.</small></form>
 <div id="lobby-join"><div class="joined-room">
